@@ -72,7 +72,11 @@ end $$;
 create trigger shifts_zplan before insert or update on public.shifts for each row execute function app.shifts_plan_chk();
 
 alter table public.services add column shift_plan_id uuid references public.shift_plans(id) on delete restrict;
+-- Relleno técnico de una columna nueva: sin pasar por las guardas de edición (también
+-- aplica a servicios finalizados) ni generar auditoría de usuario.
+alter table public.services disable trigger user;
 update public.services s set shift_plan_id = p.id from public.shift_plans p where p.terminal_id = s.terminal_id and p.is_default;
+alter table public.services enable trigger user;
 
 -- Turno de un instante según el esquema del servicio (maneja medianoche).
 create or replace function app.service_shift_for(p_service uuid, p_ts timestamptz) returns uuid
