@@ -161,7 +161,7 @@ export function DowntimeList({ orgId, service, tz }: { orgId: string; service?: 
     try {
       const rows = await all();
       await tablePdf({ title: `Tiempos perdidos${service ? ` · ${service.service_number}` : ''}`, org: membership?.organization_name, subtitle: `${rows.length} eventos`,
-        headers: ['Servicio', 'Fecha', 'Inicio', 'Final', 'Evento', 'Categoría', 'Alcance', 'Duración (min)', 'Observaciones', 'Registró'], widths: [60, 52, 62, 62, 110, 70, 60, 52, 160, 80], align: ['l', 'l', 'l', 'l', 'l', 'l', 'l', 'r', 'l', 'l'],
+        headers: ['Servicio', 'Fecha', 'Inicio', 'Final', 'Evento', 'Categoría', 'Alcance', 'Duración (min)', 'Observaciones', 'Registró'], widths: [58, 50, 82, 82, 104, 60, 58, 64, 136, 78], align: ['l', 'l', 'l', 'l', 'l', 'l', 'l', 'r', 'l', 'l'],
         rows: rows.map((d) => [d.service_number, date(d.started_at, tz), `${date(d.started_at, tz)} ${time(d.started_at, tz)}`, `${date(d.ended_at, tz)} ${time(d.ended_at, tz)}`, d.cause_name, d.category_name,
           d.scope === 'hold' ? `Bodega ${d.hold_number}` : d.scope === 'scale' ? d.scale_name ?? '' : 'Operación', fmt1(d.duration_minutes), d.observations ?? '', d.reported_by_name ?? '']),
         totals: ['Total', '', '', '', '', '', '', fmt1(rows.reduce((a, d) => a + Number(d.duration_minutes), 0)), '', ''] });
@@ -172,7 +172,7 @@ export function DowntimeList({ orgId, service, tz }: { orgId: string; service?: 
     ...(!service ? [{ key: 'svc', header: 'Servicio', cell: (d: DowntimeRow) => <span className="num font-semibold">{d.service_number}</span> }] : []),
     { key: 'date', header: 'Fecha', cell: (d) => date(d.started_at, tz) },
     { key: 'ini', header: 'Inicio', cell: (d) => <span className="num">{time(d.started_at, tz)}</span> },
-    { key: 'fin', header: 'Final', cell: (d) => <span className="num">{d.operation_date !== d.ended_at.slice(0, 10) && date(d.ended_at, tz) !== date(d.started_at, tz) ? <Badge tone="info" className="mr-1">+1 día</Badge> : null}{time(d.ended_at, tz)}</span> },
+    { key: 'fin', header: 'Final', cell: (d) => <span className="num">{date(d.ended_at, tz) !== date(d.started_at, tz) ? <Badge tone="info" className="mr-1">+1 día</Badge> : null}{time(d.ended_at, tz)}</span> },
     { key: 'ev', header: 'Evento', cell: (d) => <span className="inline-flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-full" style={{ background: d.category_color }} /><span>{d.cause_name}<span className="block text-[12px] text-mute">{d.category_name}</span></span></span> },
     { key: 'sc', header: 'Alcance', cell: (d) => (d.scope === 'hold' ? `Bodega ${d.hold_number}` : d.scope === 'scale' ? d.scale_name : 'Operación') },
     { key: 'dur', header: 'Duración', align: 'right', cell: (d) => <b>{minutes(d.duration_minutes)}</b> },

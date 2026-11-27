@@ -167,7 +167,9 @@ export async function exportProductivity(serviceId: string, number: string, tz: 
 export async function exportCycles(rows: CycleRow[], tz: string, o: { title: string; filters: CycleFilters }) {
   const wb = await newWorkbook();
   const ws = wb.addWorksheet('Ciclos');
-  const f = Object.entries(o.filters).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join(' · ');
+  const LBL: Record<string, string> = { service: 'Servicio', customer: 'Cliente', vessel: 'Buque', hold: 'Bodega', product: 'Producto', scale: 'Báscula', shift: 'Turno', plate: 'Matrícula', ticket: 'Ticket', from: 'Desde', to: 'Hasta', status: 'Estado' };
+  const show = (k: string, v: string) => k === 'service' ? (rows[0]?.service_number ?? v) : k === 'scale' ? (rows[0]?.scale_name ?? v) : k === 'product' ? (rows[0]?.product_name ?? v) : k === 'hold' ? `Bodega ${rows[0]?.hold_number ?? ''}` : k === 'status' ? (v === 'valid' ? 'Válidos' : 'Anulados') : k === 'shift' ? (rows[0]?.shift_name ?? v) : v;
+  const f = Object.entries(o.filters).filter(([, v]) => v).map(([k, v]) => `${LBL[k] ?? k}: ${show(k, String(v))}`).join(' · ');
   table(ws, sheetHeader(ws, o.title, [['Filtros', f || 'Sin filtros'], ['Registros', String(rows.length)], ['Generado', stamp()]], CYCLE_SHEET.length), CYCLE_SHEET, cycleRows(rows, tz));
   const wt = wb.addWorksheet('Detalle de camiones');
   table(wt, sheetHeader(wt, 'Detalle de camiones', [['Filtros', f || 'Sin filtros']], TRUCK_COLS.length), TRUCK_COLS, truckRows(rows, tz));

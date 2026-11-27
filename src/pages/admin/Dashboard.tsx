@@ -3,11 +3,11 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { Ship } from 'lucide-react';
-import { useOrg } from '@/lib/auth';
+import { useAuth, useOrg } from '@/lib/auth';
 import { rpc, supabase, unwrap } from '@/lib/supabase';
 import { useCustomersLite, useProducts, useRealtime, useScales, useServicesLite, useTerminals, useUrlState, useVessels } from '@/lib/hooks';
 import { hourLabel, useServiceCargo, useServiceKpis } from '@/lib/service-data';
-import { DEFAULT_TZ, ago, fmt0, fmt1, fmt2, localDayStartIso, addDays, minutes, pct, time } from '@/lib/format';
+import { DEFAULT_TZ, ago, fmt0, fmt1, fmt2, localDayStartIso, localDateInput, addDays, minutes, pct, time } from '@/lib/format';
 import { SERVICE_STATUS } from '@/lib/labels';
 import { ShipView } from '@/components/ShipView';
 import { HoldDrawer } from '@/components/HoldDrawer';
@@ -19,6 +19,7 @@ type Active = { id: string; service_number: string; status: string; vessel_name:
 
 export default function Dashboard() {
   const { orgId, membership } = useOrg();
+  const { can } = useAuth();
   const [f, setF] = useUrlState({ terminal: '', customer: '', vessel: '', service: '', product: '', from: '', to: '', sel: '' });
   const terminals = useTerminals(orgId);
   const customers = useCustomersLite(orgId);
@@ -66,7 +67,7 @@ export default function Dashboard() {
   });
   const today = useQuery({
     queryKey: ['dashboard-scales-today', orgId],
-    queryFn: async () => unwrap(await supabase.from('weigh_tickets').select('scale_id, net_tm, ended_at').eq('organization_id', orgId).eq('status', 'valid').gte('ended_at', localDayStartIso(new Date().toISOString().slice(0, 10), tz)).limit(5000)) as { scale_id: string; net_tm: number; ended_at: string }[],
+    queryFn: async () => unwrap(await supabase.from('weigh_tickets').select('scale_id, net_tm, ended_at').eq('organization_id', orgId).eq('status', 'valid').gte('ended_at', localDayStartIso(localDateInput(new Date(), tz), tz)).limit(5000)) as { scale_id: string; net_tm: number; ended_at: string }[],
   });
   useRealtime('weigh_tickets', `organization_id=eq.${orgId}`, [['dashboard'], ['dashboard-feed'], ['dashboard-scales-today'], ['dashboard-active']]);
 
@@ -173,7 +174,7 @@ export default function Dashboard() {
           })}
         </div>
       </Section>
-      {selId && <HoldDrawer serviceId={selId} hold={holdRow} cargo={cargo.cargo} tz={stz} open={!!holdId} onClose={() => setHoldId(null)} canWeigh />}
+      {selId && <HoldDrawer serviceId={selId} hold={holdRow} cargo={cargo.cargo} tz={stz} open={!!holdId} onClose={() => setHoldId(null)} canWeigh={sel?.status === 'in_operation' && can('weighing.register')} />}
     </div>
   );
 }

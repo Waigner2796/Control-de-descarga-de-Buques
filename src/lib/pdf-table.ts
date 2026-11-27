@@ -37,6 +37,9 @@ export async function tablePdf(opts: { title: string; subtitle?: string; org?: s
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = `${opts.title.replace(/[^\w\- ]+/g, '').replace(/\s+/g, '_')}.pdf`;
+  a.style.display = 'none';
+  document.body.appendChild(a);
   a.click();
+  a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
