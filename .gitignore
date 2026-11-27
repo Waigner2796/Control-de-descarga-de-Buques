@@ -8,3 +8,5 @@ supabase/.branches
 supabase/.temp
 .vercel
 coverage/
+supabase/functions/.local/
+supabase/functions/.env.local

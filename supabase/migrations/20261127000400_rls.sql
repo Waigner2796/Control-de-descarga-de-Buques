@@ -247,7 +247,9 @@ create or replace function app.service_config_guard() returns trigger
 language plpgsql security definer set search_path = '' as $$
 declare v_status text;
 begin
-  if coalesce(current_setting('app.rpc', true), '') = 'on' then return coalesce(new, old); end if;
+  -- Las funciones transaccionales (ledger de pesajes/correcciones) ya validan el estado.
+  if coalesce(current_setting('app.rpc', true), '') = 'on'
+     or coalesce(current_setting('app.ledger_write', true), '') = 'on' then return coalesce(new, old); end if;
   select status into v_status from public.services where id = coalesce(new.service_id, old.service_id);
   if v_status in ('finalized', 'cancelled') then
     raise exception 'El servicio está %; la configuración de bodegas no puede cambiar', v_status using errcode = '42501';

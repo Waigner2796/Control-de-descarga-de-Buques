@@ -7,7 +7,7 @@
 -- =============================================================================
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types) values
-  ('org-assets', 'org-assets', false, 5242880, array['image/png', 'image/jpeg', 'image/webp']),
+  ('org-assets', 'org-assets', false, 5242880, array['image/png', 'image/jpeg']),
   ('reports', 'reports', false, 52428800, array['application/pdf']),
   ('customer-documents', 'customer-documents', false, 26214400, null)
 on conflict (id) do update set public = false;

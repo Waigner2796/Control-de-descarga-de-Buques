@@ -9,9 +9,11 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
-    "test": "vitest run --dir src",
+    "test": "vitest run --dir tests/unit",
     "test:e2e": "vitest run --dir tests/e2e --no-file-parallelism",
-    "db:reset": "supabase db reset"
+    "db:reset": "supabase db reset",
+    "edge:local": "node scripts/vendor-edge-deps.mjs on && supabase functions serve --env-file supabase/functions/.env.local",
+    "edge:prod-deps": "node scripts/vendor-edge-deps.mjs off"
   },
   "engines": {
     "node": ">=20"
