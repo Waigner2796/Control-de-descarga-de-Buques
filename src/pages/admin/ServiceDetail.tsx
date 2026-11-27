@@ -10,6 +10,7 @@ import { dt, fmt0, fmt1, fmt3, localInput, localToIso, pct } from '@/lib/format'
 import { FIELD_LABEL, SERVICE_FLOW, SERVICE_STATUS } from '@/lib/labels';
 import { ShipView } from '@/components/ShipView';
 import { HoldDrawer } from '@/components/HoldDrawer';
+import { BlTab, ShiftsTab, TrucksTab } from '@/components/ServiceExtras';
 import { CyclesTable } from '@/components/CyclesTable';
 import { DowntimeList, DowntimeSummary } from '@/components/DowntimePanel';
 import { ProductivityPanel } from '@/components/ProductivityPanel';
@@ -17,7 +18,7 @@ import { ServiceReports } from '@/components/ServiceReports';
 import { Badge, Button, Checkbox, DataTable, DL, Dot, EmptyState, ErrorBox, Field, Input, Kpi, Meter, Modal, Notice, PageHeader, ReasonDialog, Section, Select, Spinner, StatusBadge, Tabs, Textarea, useToast } from '@/components/ui';
 
 type Svc = { id: string; organization_id: string; terminal_id: string; customer_id: string; vessel_id: string; service_number: string; status: string; planned_start: string | null; estimated_end: string | null; actual_start: string | null; finalized_at: string | null;
-  responsible_name: string | null; responsible_user_id: string | null; observations: string | null; created_at: string; data_revision: number; customer_name: string; vessel_name: string; imo_number: string | null; terminal_name: string; timezone: string; report_status: string | null };
+  responsible_name: string | null; responsible_user_id: string | null; observations: string | null; created_at: string; data_revision: number; customer_name: string; vessel_name: string; imo_number: string | null; terminal_name: string; timezone: string; report_status: string | null; cargo_type: 'bulk' | 'bags'; operation_kind: 'discharge' | 'load'; shift_plan_id: string | null };
 
 export default function ServiceDetail() {
   const { id } = useParams();
@@ -43,6 +44,9 @@ export default function ServiceDetail() {
     toast(`Estado: ${SERVICE_STATUS[to].label}`); refresh();
   };
   const holdRow = cargo.holds.find((h) => h.id === holdId) ?? null;
+  const load = svc.operation_kind === 'load';
+  const bagsSvc = svc.cargo_type === 'bags';
+  const sref = { id: svc.id, status: svc.status, timezone: tz, cargo_type: svc.cargo_type, operation_kind: svc.operation_kind };
   const locked = ['finalized', 'cancelled'].includes(svc.status);
 
   return (
@@ -52,7 +56,7 @@ export default function ServiceDetail() {
         title={<span className="num">{svc.service_number}</span>}
         sub={<span className="flex flex-wrap items-center gap-2"><StatusBadge map={SERVICE_STATUS} value={svc.status} /><b className="text-ink">{svc.vessel_name}</b>· <Link className="hover:underline" to={`/app/clientes/${svc.customer_id}`}>{svc.customer_name}</Link> · {svc.terminal_name}</span>}
         actions={<>
-          {svc.status === 'in_operation' && can('weighing.register') && <Link to={`/app/pesaje?servicio=${svc.id}`}><Button variant="primary" icon={<Weight className="h-4 w-4" />}>Registrar pesaje</Button></Link>}
+          {svc.status === 'in_operation' && can('weighing.register') && <Link to={`/app/pesaje?servicio=${svc.id}`}><Button variant="primary" icon={<Weight className="h-4 w-4" />}>{bagsSvc ? 'Registrar sacos' : 'Registrar pesaje'}</Button></Link>}
           {can('services.status') && next.filter((x) => x !== 'cancelled' || can('services.manage')).map((x) => (
             <Button key={x} variant={x === 'cancelled' ? 'ghost' : 'secondary'} onClick={() => (x === 'suspended' || x === 'cancelled' ? setDlg({ to: x }) : change(x).catch((e) => toast(e.message, 'bad')))}>
               {x === 'in_operation' ? (svc.status === 'suspended' || svc.status === 'closing' ? 'Reanudar operación' : 'Iniciar operación') : x === 'closing' ? 'Pasar a cierre' : x === 'suspended' ? 'Suspender' : x === 'cancelled' ? 'Cancelar servicio' : SERVICE_STATUS[x].label}
@@ -65,7 +69,10 @@ export default function ServiceDetail() {
       {locked && <Notice tone="info" className="mb-4">Servicio {SERVICE_STATUS[svc.status].label.toLowerCase()}: no admite nuevos pesajes{svc.status === 'finalized' ? ' sin una reapertura autorizada y auditada. Las correcciones generan una nueva versión del informe.' : '.'}</Notice>}
       <Tabs value={f.tab} onChange={(t) => setF({ tab: t })} tabs={[
         { id: 'resumen', label: 'Resumen' }, { id: 'bodegas', label: 'Bodegas y carga' },
-        ...(can('weighing.view_all') || can('weighing.register') ? [{ id: 'ciclos', label: 'Pesajes y ciclos' }] : []),
+        ...(cargo.bls.length || can('services.manage') ? [{ id: 'bl', label: 'BL', count: cargo.bls.length }] : []),
+        ...(!bagsSvc && (can('weighing.view_all') || can('weighing.register')) ? [{ id: 'ciclos', label: 'Pesajes y ciclos' }] : []),
+        ...(!bagsSvc && can('services.view') ? [{ id: 'camiones', label: 'Camiones' }] : []),
+        { id: 'turnos', label: bagsSvc ? 'Turnos y sacos' : 'Por turno' },
         { id: 'tiempos', label: 'Tiempos perdidos' },
         ...(can('productivity.view') ? [{ id: 'productividad', label: 'Productividad' }] : []),
         ...(can('reports.view') ? [{ id: 'reportes', label: 'Informe final' }] : []),
@@ -74,13 +81,13 @@ export default function ServiceDetail() {
       {f.tab === 'resumen' && (
         <div className="grid gap-5">
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Kpi label="Tonelaje inicial" value={`${fmt0(cargo.initial)} TM`} />
-            <Kpi label="Descargado" value={`${fmt1(cargo.discharged)} TM`} sub={pct(cargo.initial ? (cargo.discharged / cargo.initial) * 100 : 0)} />
+            <Kpi label={load ? 'A cargar' : 'Tonelaje inicial'} value={`${fmt0(cargo.initial)} TM`} sub={bagsSvc ? `${fmt0(cargo.cargo.reduce((a, c) => a + (Number(c.initial_tm) * 1000) / (cargo.bagOf(c.product_id) || 1), 0))} sacos` : undefined} />
+            <Kpi label={load ? 'Cargado' : 'Descargado'} value={`${fmt1(cargo.discharged)} TM`} sub={pct(cargo.initial ? (cargo.discharged / cargo.initial) * 100 : 0)} />
             <Kpi label="Pendiente" value={`${fmt1(cargo.pending)} TM`} tone="red" />
             <Kpi label="Bodegas" value={cargo.holds.length} sub={`${cargo.cargo.length} líneas de carga`} />
           </div>
           <Section title={svc.vessel_name}>
-            {cargo.ship.length ? <ShipView holds={cargo.ship} selected={holdId} onSelect={setHoldId} vesselName={svc.vessel_name} /> : <p className="text-mute">Configure las bodegas del servicio.</p>}
+            {cargo.ship.length ? <ShipView holds={cargo.ship} selected={holdId} onSelect={setHoldId} vesselName={svc.vessel_name} kind={svc.operation_kind} /> : <p className="text-mute">Configure las bodegas del servicio.</p>}
           </Section>
           <Section title="Información del servicio">
             <DL cols={3} items={[['Cliente', svc.customer_name], ['Buque', `${svc.vessel_name}${svc.imo_number ? ` · IMO ${svc.imo_number}` : ''}`], ['Terminal', svc.terminal_name],
@@ -92,6 +99,9 @@ export default function ServiceDetail() {
         </div>
       )}
       {f.tab === 'bodegas' && <CargoTab service={svc} cargo={cargo} locked={locked} />}
+      {f.tab === 'bl' && <BlTab svc={sref} />}
+      {f.tab === 'camiones' && <TrucksTab svc={sref} />}
+      {f.tab === 'turnos' && <ShiftsTab svc={sref} holds={cargo.holds.map((h) => h.hold_number)} />}
       {f.tab === 'ciclos' && <CyclesTable orgId={orgId} serviceId={svc.id} tz={tz} />}
       {f.tab === 'tiempos' && <div className="grid gap-5"><DowntimeList orgId={orgId} tz={tz} service={{ id: svc.id, service_number: svc.service_number, status: svc.status, vessel_name: svc.vessel_name, customer_name: svc.customer_name, terminal_id: svc.terminal_id, timezone: tz, customer_id: svc.customer_id, vessel_id: svc.vessel_id }} /><DowntimeSummary orgId={orgId} serviceId={svc.id} tz={tz} /></div>}
       {f.tab === 'productividad' && <ProductivityPanel serviceId={svc.id} tz={tz} />}
@@ -135,7 +145,7 @@ function CloseDialog({ open, onClose, service, pending, onDone }: { open: boolea
     <Modal open={open} onClose={onClose} title={`Finalizar ${service.service_number}`}
       footer={<><Button onClick={onClose}>Cancelar</Button><Button variant="primary" loading={busy} onClick={submit}>Finalizar y generar informe</Button></>}>
       <div className="grid gap-4 text-[14px]">
-        <p>Se validará que no existan visitas de báscula abiertas ni correcciones pendientes, se conciliará el tonelaje (saldo = movimientos = pesajes) y se generará automáticamente el informe final en PDF para su firma.</p>
+        <p>Se validará que no existan correcciones pendientes, se conciliará el tonelaje (saldo = movimientos = pesajes) y se generará automáticamente el informe final en PDF para su firma.</p>
         {pending > 0.0005 ? <Notice tone="warn">Quedan <b>{fmt3(pending)} TM</b> pendientes según el tonelaje inicial. Registre una nota de conciliación (p. ej. remanente a bordo, diferencia de manifiesto).</Notice> : <Notice tone="ok">Todo el tonelaje inicial fue descargado.</Notice>}
         <Field label="Nota de cierre / conciliación" hint="Aparece en la sección 8 del informe."><Textarea value={note} onChange={(e) => setNote(e.target.value)} /></Field>
         <Field label="Conclusiones del informe"><Textarea value={concl} onChange={(e) => setConcl(e.target.value)} placeholder="Opcional; puede editarse antes de firmar." /></Field>

@@ -86,9 +86,16 @@ export async function buildReportPdf(PDFLib: any, data: any, images: ReportImage
   const doc = await PDFDocument.create();
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
-  const brand = hexToRgb(data.template?.primary_color || '#0b4f71');
+  const palette: string[] = (Array.isArray(data.settings?.brand_colors) && data.settings.brand_colors.length ? data.settings.brand_colors : [data.template?.primary_color || '#0b4f71'])
+    .filter((c: string) => /^#[0-9a-f]{6}$/i.test(c));
+  const brand = hexToRgb(palette[0] || '#0b4f71');
+  const accentC = hexToRgb(palette[1] || palette[0] || '#1874a8');
+  const hiC = hexToRgb(palette[2] || palette[1] || '#f2a600');
   const C = {
     brand: rgb(brand.r, brand.g, brand.b),
+    accent: rgb(accentC.r, accentC.g, accentC.b),
+    hi: rgb(hiC.r, hiC.g, hiC.b),
+    accentSoft: (() => { const c = mix(accentC, 0.75); return rgb(c.r, c.g, c.b); })(),
     brandSoft: (() => { const c = mix(brand, 0.88); return rgb(c.r, c.g, c.b); })(),
     ink: rgb(0.06, 0.11, 0.17), mute: rgb(0.35, 0.42, 0.47), line: rgb(0.86, 0.89, 0.92),
     zebra: rgb(0.965, 0.973, 0.98), red: rgb(0.81, 0.23, 0.15), white: rgb(1, 1, 1), warn: rgb(0.61, 0.39, 0),
@@ -99,7 +106,12 @@ export async function buildReportPdf(PDFLib: any, data: any, images: ReportImage
   const m = data.metrics || {};
   const totals = m.totals || {};
   const dpiMode = data.settings?.dpi_exposure_in_reports || 'masked';
-  const title = sanitize(data.template?.title || 'INFORME FINAL DE OPERACIÓN DE DESCARGA');
+  const load = (data.operation_kind || svc.operation_kind) === 'load';
+  const DONE = load ? 'Cargado' : 'Descargado';
+  const done = load ? 'cargado' : 'descargado';
+  const bags = (data.cargo_type || svc.cargo_type) === 'bags';
+  const rawTitle = data.template?.title || 'INFORME FINAL DE OPERACIÓN DE DESCARGA';
+  const title = sanitize(load ? rawTitle.replace(/DESCARGA/g, 'CARGA').replace(/descarga/g, 'carga') : rawTitle);
 
   const embed = async (bytes?: Uint8Array | null) => {
     if (!bytes || bytes.length < 8) return null;
@@ -142,7 +154,13 @@ export async function buildReportPdf(PDFLib: any, data: any, images: ReportImage
 
   const header = () => {
     page.drawRectangle({ x: 0, y: H - 6, width: W, height: 6, color: C.brand });
-    text(fit(data.organization?.name || '', W / 2, 9, bold), MX, H - 30, 9, bold, C.brand);
+    let nx = MX;
+    if (orgLogo) {
+      const sc = Math.min(110 / orgLogo.width, 22 / orgLogo.height, 1);
+      page.drawImage(orgLogo, { x: MX, y: H - 35, width: orgLogo.width * sc, height: orgLogo.height * sc });
+      nx = MX + orgLogo.width * sc + 10;
+    }
+    text(fit(data.organization?.name || '', W / 2 - (nx - MX), 9, bold), nx, H - 30, 9, bold, C.brand);
     const right = `Informe final · Servicio ${sanitize(svc.service_number)} · Versión ${opt.version}`;
     text(fit(right, W / 2 - MX, 8), W - MX - width(fit(right, W / 2 - MX, 8), 8), H - 30, 8, font, C.mute);
     page.drawLine({ start: { x: MX, y: H - 38 }, end: { x: W - MX, y: H - 38 }, thickness: 0.6, color: C.line });
@@ -154,7 +172,11 @@ export async function buildReportPdf(PDFLib: any, data: any, images: ReportImage
     y = H - 60;
   };
   const ensure = (h: number, size?: [number, number]) => { if (y - h < 56) newPage(size || [W, H]); };
+  /** Página nueva solo si la actual ya tiene contenido o tiene otra orientación. */
+  const freshOrNew = (size: [number, number] = PORTRAIT) => { if (!(y >= H - 61 && W === size[0])) newPage(size); };
 
+  let sn = 0;
+  const S = (label: string) => section(++sn, label);
   const section = (n: number, label: string) => {
     ensure(52);
     y -= 10;
@@ -265,7 +287,7 @@ export async function buildReportPdf(PDFLib: any, data: any, images: ReportImage
 
   // ------------------------------------------------------------------ 1. INFORMACIÓN GENERAL
   newPage();
-  section(1, 'Información general');
+  S('Información general');
   kv([
     ['Cliente', data.customer?.legal_name || data.customer?.trade_name], ['NIT del cliente', data.customer?.tax_id || '—'],
     ['Buque', data.vessel?.name], ['Número IMO', data.vessel?.imo_number || 'No registrado'],
@@ -277,49 +299,162 @@ export async function buildReportPdf(PDFLib: any, data: any, images: ReportImage
   ]);
 
   // ------------------------------------------------------------------ 2. RESUMEN DE TONELAJE
-  section(2, 'Resumen de tonelaje');
+  S('Resumen de tonelaje');
   stat([
-    ['Tonelaje inicial', `${fmt3(totals.initial_tm)} TM`], ['Descargado', `${fmt3(totals.discharged_tm)} TM`],
-    ['Pendiente', `${fmt3(totals.pending_tm)} TM`, Number(totals.pending_tm) > 0], ['Descarga', `${fmt2(totals.progress_pct)} %`],
+    [load ? 'A cargar' : 'Tonelaje inicial', `${fmt3(totals.initial_tm)} TM`], [DONE, `${fmt3(totals.discharged_tm)} TM`],
+    ['Pendiente', `${fmt3(totals.pending_tm)} TM`, Number(totals.pending_tm) > 0], [load ? 'Avance de carga' : 'Avance de descarga', `${fmt2(totals.progress_pct)} %`],
   ]);
+  if (bags && totals.initial_units != null) {
+    para(`Carga en sacos: ${fmt0(totals.discharged_units)} de ${fmt0(totals.initial_units)} sacos ${load ? 'cargados' : 'descargados'}${m.damaged_bags ? ` · ${fmt0(m.damaged_bags)} sacos dañados o rechazados` : ''}.`, 9, C.mute);
+  }
+  const bls = (data.bls || []) as any[];
+  if (bls.length) {
+    sub('Conocimientos de embarque (BL)');
+    table([
+      { h: 'BL', w: 110 }, { h: 'Producto', w: 120 }, { h: 'Manifestado (TM)', w: 90, align: 'r' }, { h: `${DONE} (TM)`, w: 90, align: 'r' },
+      { h: 'Diferencia (TM)', w: 85, align: 'r' }, ...(bags ? [{ h: 'Sacos', w: 70, align: 'r' } as Col] : []),
+    ], bls.map((b) => [b.bl, b.product, fmt3(b.planned_tm), fmt3(b.discharged_tm), fmt3(b.diff_tm), ...(bags ? [fmt0(b.discharged_units)] : [])]),
+    { total: ['Total', '', fmt3(bls.reduce((a, b) => a + Number(b.planned_tm), 0)), fmt3(bls.reduce((a, b) => a + Number(b.discharged_tm), 0)),
+      fmt3(bls.reduce((a, b) => a + Number(b.diff_tm), 0)), ...(bags ? [fmt0(bls.reduce((a, b) => a + Number(b.discharged_units || 0), 0))] : [])] });
+  }
 
   // ------------------------------------------------------------------ 3. DETALLE DE BODEGAS
-  section(3, 'Detalle de bodegas');
+  S('Detalle de bodegas');
   const cargo = (data.cargo || []) as any[];
   const multiVessel = new Set(cargo.map((c) => c.vessel)).size > 1;
   table([
     { h: 'Bodega', w: 60 }, ...(multiVessel ? [{ h: 'Buque', w: 90 } as Col] : []), { h: 'Producto', w: 120 },
-    { h: 'Inicial (TM)', w: 80, align: 'r' }, { h: 'Descargado (TM)', w: 90, align: 'r' }, { h: 'Pendiente (TM)', w: 85, align: 'r' }, { h: 'Avance', w: 55, align: 'r' },
+    { h: load ? 'A cargar (TM)' : 'Inicial (TM)', w: 80, align: 'r' }, { h: `${DONE} (TM)`, w: 90, align: 'r' }, { h: 'Pendiente (TM)', w: 85, align: 'r' }, { h: 'Avance', w: 55, align: 'r' },
   ], cargo.map((c) => [`Bodega ${c.hold_number}`, ...(multiVessel ? [c.vessel] : []), c.product, fmt3(c.initial_tm), fmt3(c.discharged_tm), fmt3(c.pending_tm),
     `${fmt1(Number(c.initial_tm) ? (Number(c.discharged_tm) / Number(c.initial_tm)) * 100 : 0)} %`]),
   { total: ['Total', ...(multiVessel ? [''] : []), '', fmt3(totals.initial_tm), fmt3(totals.discharged_tm), fmt3(totals.pending_tm), `${fmt1(totals.progress_pct)} %`] });
 
+  // ------------------------------------------------------------------ AVANCE DEL BUQUE Y POR TURNO (horizontal)
+  const hb = ((m.by_hold || []) as any[]).slice().sort((a, b) => a.hold_number - b.hold_number)
+    .map((h) => ({ ...h, initial_tm: h.initial_tm ?? Number(h.discharged_tm || 0) + Number(h.pending_tm || 0) }));
+  const unitsByHold = (key: 'initial_units' | 'discharged_units', hn: number) => cargo.filter((c) => c.hold_number === hn).reduce((a, c) => a + Number(c[key] || 0), 0);
+  if (hb.length) {
+    newPage(LANDSCAPE);
+    S('Avance del buque por bodega');
+    const shipW = W - 2 * MX, shipH = 118, deckY = y - 40, x0 = MX;
+    const hull = `M 0 0 L ${shipW} 0 L ${shipW} ${shipH * 0.72} Q ${shipW} ${shipH} ${shipW - 24} ${shipH} L 56 ${shipH} Q 12 ${shipH} 0 0 Z`;
+    page.drawSvgPath(hull, { x: x0, y: deckY, color: C.zebra, borderColor: C.brand, borderWidth: 1.2 });
+    const supW = 74, supX = x0 + shipW - supW - 10;
+    page.drawRectangle({ x: supX, y: deckY, width: supW, height: 34, color: C.white, borderColor: C.brand, borderWidth: 1 });
+    page.drawRectangle({ x: supX + 6, y: deckY + 34, width: supW - 12, height: 12, color: C.white, borderColor: C.brand, borderWidth: 1 });
+    for (let i = 0; i < 5; i++) page.drawRectangle({ x: supX + 8 + i * 12.5, y: deckY + 18, width: 8, height: 5, color: C.brand });
+    const hx0 = x0 + 64, hx1 = supX - 14, gap = 8, n = hb.length, hw = (hx1 - hx0 - gap * (n - 1)) / n, top = deckY - 6, bot = deckY - shipH + 10, ih = top - bot;
+    hb.forEach((h, i) => {
+      const hx = hx0 + i * (hw + gap); const ini = Number(h.initial_tm) || 0; const dis = Number(h.discharged_tm) || 0;
+      const level = ini ? (load ? dis / ini : (ini - dis) / ini) : 0;
+      page.drawRectangle({ x: hx, y: bot, width: hw, height: ih, color: C.white, borderColor: C.mute, borderWidth: 0.6 });
+      if (level > 0) page.drawRectangle({ x: hx, y: bot, width: hw, height: ih * Math.min(1, level), color: C.accentSoft });
+      page.drawRectangle({ x: hx + 2, y: deckY + 1, width: hw - 4, height: 14, color: C.brand });
+      const lab = `Bodega ${h.hold_number}`; text(fit(lab, hw - 6, 8, bold), hx + (hw - Math.min(width(lab, 8, bold), hw - 6)) / 2, deckY + 5, 8, bold, C.white);
+      const pc = `${fmt1(ini ? (dis / ini) * 100 : 0)} %`; text(pc, hx + (hw - width(pc, 11, bold)) / 2, bot + ih / 2 + 2, 11, bold, C.ink);
+      const sub2 = `${fmt0(ini - dis)} TM pend.`; if (hw > 60) text(sub2, hx + (hw - width(sub2, 7.5)) / 2, bot + ih / 2 - 11, 7.5, font, C.mute);
+    });
+    y = deckY - shipH - 18;
+    const qcols: Col[] = [{ h: '', w: 120 }, ...hb.map((h) => ({ h: `Bodega ${h.hold_number}`, w: 70, align: 'r' } as Col)), { h: 'Total', w: 80, align: 'r' }];
+    const row = (label: string, f: (h: any) => number, d: 0 | 3) => [label, ...hb.map((h) => (d ? fmt3(f(h)) : fmt0(f(h)))), d ? fmt3(hb.reduce((a, h) => a + f(h), 0)) : fmt0(hb.reduce((a, h) => a + f(h), 0))];
+    table(qcols, [
+      row(load ? 'A cargar (TM)' : 'Nominado (TM)', (h) => Number(h.initial_tm), 3), row(`${DONE} (TM)`, (h) => Number(h.discharged_tm), 3), row('Pendiente (TM)', (h) => Number(h.pending_tm), 3),
+      ...(bags ? [row(load ? 'Sacos a cargar' : 'Sacos nominados', (h) => unitsByHold('initial_units', h.hold_number), 0), row(`Sacos ${done}s`, (h) => unitsByHold('discharged_units', h.hold_number), 0),
+        row('Sacos pendientes', (h) => unitsByHold('initial_units', h.hold_number) - unitsByHold('discharged_units', h.hold_number), 0)] : []),
+    ], { size: 8 });
+    const periods = (m.shift_periods || []) as any[];
+    if (periods.length) {
+      sub(`Avance por turno (${bags ? 'sacos' : 'TM'})${data.shift_plan ? ` · esquema «${sanitize(data.shift_plan)}»` : ''}`);
+      const fd = (iso: string) => { const [d, t] = String(iso).split('T'); const [yy, mm, dd] = d.split('-'); return `${dd}/${mm}/${yy} ${t}`; };
+      const val = (p: any, hn: number) => { const x = (p.holds || []).find((z: any) => z.hold_number === hn); return bags ? Number(x?.bags || 0) : Number(x?.tm || 0); };
+      const f2 = (v: number) => (bags ? fmt0(v) : fmt3(v));
+      table([{ h: 'Turno', w: 60 }, { h: 'Desde', w: 72 }, { h: 'Hasta', w: 72 }, ...hb.map((h) => ({ h: `B${h.hold_number}`, w: 52, align: 'r' } as Col)),
+        { h: `${DONE} en turno`, w: 72, align: 'r' }, { h: 'Acumulado', w: 72, align: 'r' }, ...(bags ? [{ h: 'Dañados', w: 52, align: 'r' } as Col] : [])],
+      periods.map((p) => [`${p.n} · ${p.shift_name || ''}`, fd(p.from), fd(p.to), ...hb.map((h) => f2(val(p, h.hold_number))), f2(bags ? Number(p.bags || 0) : Number(p.tm)),
+        f2(bags ? Number(p.cum_bags) : Number(p.cum_tm)), ...(bags ? [fmt0(p.damaged?.total || 0)] : [])]),
+      { size: 7.5, total: ['Total', '', '', ...hb.map((h) => f2(periods.reduce((a, p) => a + val(p, h.hold_number), 0))), f2(periods.reduce((a, p) => a + Number(bags ? p.bags || 0 : p.tm), 0)), '',
+        ...(bags ? [fmt0(periods.reduce((a, p) => a + Number(p.damaged?.total || 0), 0))] : [])] });
+      if (bags && periods.some((p) => p.damaged)) {
+        sub('Sacos dañados o rechazados por turno');
+        table([{ h: 'Turno', w: 90 }, { h: 'Sucios', w: 60, align: 'r' }, { h: 'Rotos', w: 60, align: 'r' }, { h: 'Mojados', w: 60, align: 'r' }, { h: 'Al mar', w: 60, align: 'r' }, { h: 'Total', w: 60, align: 'r' }, { h: 'Notas', w: 200 }],
+          periods.filter((p) => p.damaged).map((p) => [`${p.n} · ${p.shift_name || ''}`, fmt0(p.damaged.dirty), fmt0(p.damaged.broken), fmt0(p.damaged.wet), fmt0(p.damaged.to_sea), fmt0(p.damaged.total), p.damaged.notes || '']), { size: 7.5 });
+      }
+    }
+    newPage();
+  }
+
   // ------------------------------------------------------------------ 4. DETALLE DE BÁSCULAS
-  section(4, 'Detalle de básculas');
   const bs = (m.by_scale || []) as any[];
-  table([{ h: 'Báscula', w: 150 }, { h: 'Camiones', w: 70, align: 'r' }, { h: 'Tonelaje (TM)', w: 95, align: 'r' }, { h: 'Prom. por camión (TM)', w: 105, align: 'r' }, { h: 'Ciclo promedio', w: 95, align: 'r' }],
+  if (!bags && bs.length) S('Detalle de básculas');
+  if (!bags && bs.length) table([{ h: 'Báscula', w: 150 }, { h: 'Camiones', w: 70, align: 'r' }, { h: 'Tonelaje (TM)', w: 95, align: 'r' }, { h: 'Prom. por camión (TM)', w: 105, align: 'r' }, { h: 'Ciclo promedio', w: 95, align: 'r' }],
     bs.map((s) => [s.name, fmt0(s.trucks), fmt3(s.tons), fmt3(s.avg_tm_per_truck), s.avg_cycle_minutes == null ? '—' : `${fmt1(s.avg_cycle_minutes)} min`]),
     { total: ['Total', fmt0(m.trucks), fmt3(m.tons_in_range), fmt3(m.avg_tm_per_truck), m.avg_cycle_minutes == null ? '—' : `${fmt1(m.avg_cycle_minutes)} min`] });
 
   // ------------------------------------------------------------------ 5. REGISTROS DE CAMIONES (horizontal)
   const tickets = (data.tickets || []) as any[];
+  if (tickets.length) {
   newPage(LANDSCAPE);
-  section(5, `Registros de camiones (${fmt0(tickets.length)} pesajes válidos)`);
+  S(`Registros de camiones (${fmt0(tickets.length)} pesajes válidos)`);
   const showDpi = dpiMode !== 'hidden';
+  const showTc = tickets.some((t) => t.tc);
+  const showBl = tickets.some((t) => t.bl);
+  const showUnits = bags && tickets.some((t) => t.units != null);
   const tcols: Col[] = [
-    { h: 'Ticket', w: 58 }, { h: 'Matrícula', w: 58 }, { h: 'Matrícula TC', w: 58 }, { h: 'Piloto', w: 104 },
-    ...(showDpi ? [{ h: 'DPI', w: 70 } as Col] : []), { h: 'Bruto (kg)', w: 54, align: 'r' }, { h: 'Tara (kg)', w: 52, align: 'r' }, { h: 'Neto (kg)', w: 54, align: 'r' },
-    { h: 'Hora de inicio', w: 72 }, { h: 'Hora final', w: 72 }, { h: 'Báscula', w: 58 }, { h: 'Bodega', w: 36, align: 'c' }, { h: 'Producto', w: 64 },
+    { h: 'Boleta', w: 54 }, { h: 'Placa', w: 56 }, ...(showTc ? [{ h: 'Placa TC', w: 52 } as Col] : []), { h: 'Piloto', w: 96 },
+    ...(showDpi ? [{ h: 'DPI', w: 66 } as Col] : []), { h: 'Bruto (kg)', w: 52, align: 'r' }, { h: 'Tara (kg)', w: 50, align: 'r' }, { h: 'Neto (kg)', w: 54, align: 'r' },
+    ...(showUnits ? [{ h: 'Sacos', w: 40, align: 'r' } as Col] : []),
+    { h: 'Hora', w: 70 }, { h: 'Ciclo', w: 40, align: 'r' }, { h: 'Báscula / punto', w: 62 }, ...(showBl ? [{ h: 'BL', w: 58 } as Col] : []),
+    { h: 'Bodega', w: 34, align: 'c' }, { h: 'Producto', w: 60 },
   ];
-  table(tcols, tickets.map((t) => [t.ticket, t.plate, t.tc || '—', t.driver, ...(showDpi ? [maskDpi(t.dpi, dpiMode)] : []),
-    fmt0(t.gross_kg), fmt0(t.tare_kg), fmt0(t.net_kg), t.start, t.end, t.scale, t.hold, t.product]),
-  { size: 7, total: ['Total', '', '', '', ...(showDpi ? [''] : []), '', '', fmt0(tickets.reduce((a, t) => a + Number(t.net_kg), 0)), '', '', '', '', ''] });
+  table(tcols, tickets.map((t) => [t.ticket, t.plate, ...(showTc ? [t.tc || '—'] : []), t.driver, ...(showDpi ? [maskDpi(t.dpi, dpiMode)] : []),
+    fmt0(t.gross_kg), fmt0(t.tare_kg), fmt0(t.net_kg), ...(showUnits ? [t.units == null ? '—' : fmt0(t.units)] : []),
+    t.time ?? t.start, t.cycle_min == null ? '—' : `${fmt0(t.cycle_min)} min`, t.scale, ...(showBl ? [t.bl || '—'] : []), t.hold, t.product]),
+  { size: 7, total: ['Total', '', ...(showTc ? [''] : []), '', ...(showDpi ? [''] : []), '', '', fmt0(tickets.reduce((a, t) => a + Number(t.net_kg), 0)),
+    ...(showUnits ? [fmt0(tickets.reduce((a, t) => a + Number(t.units || 0), 0))] : []), '', '', '', ...(showBl ? [''] : []), '', ''] });
+  para('Ciclo: tiempo entre la pasada anterior del mismo camión y esta boleta. La primera pasada de cada camión no tiene ciclo.', 8, C.mute);
   if (data.voided_tickets) para(`Tickets anulados con motivo auditado (no incluidos en el tonelaje): ${fmt0(data.voided_tickets)}.`, 8.5, C.mute);
   if (dpiMode === 'masked') para('DPI con exposición limitada: se muestran solo los últimos cuatro dígitos.', 8, C.mute);
+  }
+
+  // ------------------------------------------------------------------ VERIFICACIÓN DEL PESO DE SACOS
+  const bsr = (data.bag_sample_report || []) as any[];
+  if (bags && bsr.length) {
+    freshOrNew();
+    S('Verificación del peso de sacos');
+    para(`Peso de cada saco registrado con su temperatura; neto = peso del saco - tara general de la presentación. Promedio general: ${fmt2(m.bag_samples?.avg_net_kg)} kg neto · ${fmt1(m.bag_samples?.avg_temp_c)} °C en ${fmt0(m.bag_samples?.count)} sacos.`, 9, C.mute);
+    for (const per of bsr) {
+      const rows = (per.rows || []) as any[];
+      sub(`${sanitize(per.shift_name || 'Sin turno')}${per.from ? ` · del ${per.from} al ${per.to}` : ''} · ${fmt0(per.samples)} sacos`);
+      table([{ h: 'Camión', w: 46, align: 'r' }, { h: 'Boleta', w: 80 }, { h: 'Producto', w: 110 }, { h: 'Sacos', w: 44, align: 'r' }, { h: 'Objetivo (kg)', w: 70, align: 'r' }, { h: 'Neto prom. (kg)', w: 76, align: 'r' }, { h: 'Temp. prom. (°C)', w: 76, align: 'r' }],
+        rows.map((r, i) => [String(i + 1), r.ticket, r.product, fmt0(r.samples), r.target_net_kg == null ? '—' : fmt2(r.target_net_kg), fmt2(r.avg_net_kg), fmt1(r.avg_temp_c)]),
+        { size: 7.5, total: ['', 'Promedio total', '', fmt0(per.samples), rows[0]?.target_net_kg == null ? '—' : fmt2(rows[0].target_net_kg), fmt2(per.avg_net_kg), fmt1(per.avg_temp_c)] });
+      // Gráfico: objetivo vs. neto promedio por camión
+      if (rows.length > 1) {
+        const ch = 130; ensure(ch + 34);
+        const gx = MX + 34, gw = W - 2 * MX - 44, gy = y - ch;
+        const vals = rows.flatMap((r) => [Number(r.avg_net_kg), Number(r.target_net_kg ?? r.avg_net_kg)]);
+        let lo = Math.min(...vals), hi = Math.max(...vals); const padv = Math.max(0.05, (hi - lo) * 0.15); lo -= padv; hi += padv;
+        const px = (i: number) => gx + (rows.length === 1 ? gw / 2 : (i / (rows.length - 1)) * gw);
+        const py = (v: number) => gy + ((v - lo) / (hi - lo)) * ch;
+        for (let t = 0; t <= 4; t++) { const v = lo + ((hi - lo) * t) / 4; page.drawLine({ start: { x: gx, y: py(v) }, end: { x: gx + gw, y: py(v) }, thickness: 0.3, color: C.line }); text(fmt2(v), MX, py(v) - 3, 6.5, font, C.mute); }
+        const tgt = rows[0]?.target_net_kg;
+        if (tgt != null) page.drawLine({ start: { x: gx, y: py(Number(tgt)) }, end: { x: gx + gw, y: py(Number(tgt)) }, thickness: 1.2, color: C.accent });
+        rows.forEach((r, i) => {
+          if (i > 0) page.drawLine({ start: { x: px(i - 1), y: py(Number(rows[i - 1].avg_net_kg)) }, end: { x: px(i), y: py(Number(r.avg_net_kg)) }, thickness: 1.2, color: C.hi });
+          page.drawCircle({ x: px(i), y: py(Number(r.avg_net_kg)), size: 1.8, color: C.hi });
+          if (rows.length <= 30 || i % Math.ceil(rows.length / 30) === 0) text(String(i + 1), px(i) - width(String(i + 1), 6.5) / 2, gy - 9, 6.5, font, C.mute);
+        });
+        y = gy - 20;
+        page.drawRectangle({ x: gx, y: y + 2, width: 10, height: 2.5, color: C.accent }); text('Objetivo', gx + 14, y, 7.5, font, C.mute);
+        page.drawRectangle({ x: gx + 70, y: y + 2, width: 10, height: 2.5, color: C.hi }); text('Neto promedio por camión', gx + 84, y, 7.5, font, C.mute);
+        y -= 16;
+      }
+    }
+  }
 
   // ------------------------------------------------------------------ 6. TIEMPOS PERDIDOS
-  newPage();
-  section(6, 'Tiempos perdidos');
+  freshOrNew();
+  S('Tiempos perdidos');
   const dts = (data.downtime || []) as any[];
   if (!dts.length) para('No se registraron tiempos perdidos durante la operación.', 9.5, C.mute);
   else table([
@@ -336,7 +471,8 @@ export async function buildReportPdf(PDFLib: any, data: any, images: ReportImage
   }
 
   // ------------------------------------------------------------------ 7. PRODUCTIVIDAD
-  section(7, 'Productividad');
+  if (!bags) {
+  S('Productividad');
   stat([['Camiones procesados', fmt0(m.trucks)], ['Toneladas por hora', m.tph == null ? '—' : `${fmt2(m.tph)}`], ['Ciclo promedio', m.avg_cycle_minutes == null ? '—' : `${fmt1(m.avg_cycle_minutes)} min`], ['Horas perdidas', hours(m.downtime_minutes_reported)]]);
   kv([
     ['Ventana operativa (primer a último pesaje)', m.window_hours == null ? '—' : `${fmt2(m.window_hours)} h`],
@@ -346,7 +482,7 @@ export async function buildReportPdf(PDFLib: any, data: any, images: ReportImage
     ['Promedio por camión', m.avg_tm_per_truck == null ? '—' : `${fmt3(m.avg_tm_per_truck)} TM`],
     ['Camiones por hora', m.trucks_per_hour == null ? '—' : fmt2(m.trucks_per_hour)],
   ]);
-  para('El tiempo de ciclo corresponde a la diferencia entre la hora final y la hora de inicio registradas en báscula. El tiempo perdido es el reportado manualmente; solo los eventos con alcance de toda la operación (fusionando solapamientos) se descuentan para obtener el tiempo efectivo. Los eventos de una bodega o báscula no se consideran parada total.', 8, C.mute);
+  para('El ciclo es el tiempo entre dos pasadas consecutivas del mismo camión por báscula (una sola hora por boleta). El tiempo perdido es el reportado manualmente; solo los eventos con alcance de toda la operación (fusionando solapamientos) se descuentan para obtener el tiempo efectivo. Los eventos de una bodega o báscula no se consideran parada total.', 8, C.mute);
   y -= 4;
   sub('Productividad por bodega');
   table([{ h: 'Bodega', w: 70 }, { h: 'Camiones', w: 70, align: 'r' }, { h: 'Descargado (TM)', w: 100, align: 'r' }, { h: 'Pendiente (TM)', w: 100, align: 'r' }, { h: 'Tiempo perdido', w: 90, align: 'r' }],
@@ -357,8 +493,10 @@ export async function buildReportPdf(PDFLib: any, data: any, images: ReportImage
   sub('Resumen de rendimiento');
   para(`Se procesaron ${fmt0(m.trucks)} camiones con un promedio de ${fmt3(m.avg_tm_per_truck)} TM por camión, para un total de ${fmt3(totals.discharged_tm)} TM descargadas (${fmt2(totals.progress_pct)} % del tonelaje inicial). El ritmo fue de ${m.tph == null ? '—' : fmt2(m.tph)} TM/h en la ventana operativa y de ${m.tph_effective == null ? '—' : fmt2(m.tph_effective)} TM/h sobre el tiempo efectivo, con ${hours(m.downtime_minutes_reported)} de tiempo perdido reportado en ${fmt0(m.downtime_events)} eventos.`);
 
+  }
+
   // ------------------------------------------------------------------ 8. OBSERVACIONES Y CONCLUSIONES
-  section(8, 'Observaciones y conclusiones');
+  S('Observaciones y conclusiones');
   if (svc.observations) { sub('Observaciones de la operación'); para(svc.observations); }
   if (svc.closure_note) { sub('Nota de cierre y conciliación'); para(svc.closure_note); }
   sub('Conclusiones');
@@ -366,8 +504,14 @@ export async function buildReportPdf(PDFLib: any, data: any, images: ReportImage
   if (data.corrections) para(`Registros corregidos con trazabilidad completa en el sistema: ${fmt0(data.corrections)} solicitud(es).`, 8.5, C.mute);
   if (opt.changeSummary) para(opt.changeSummary, 8.5, C.warn, bold);
 
+  // ------------------------------------------------------------------ DESCARGO DE RESPONSABILIDAD
+  if (data.settings?.report_disclaimer) {
+    S('Descargo de responsabilidad');
+    para(data.settings.report_disclaimer, 8.5, C.mute);
+  }
+
   // ------------------------------------------------------------------ 9. FIRMA Y SELLO
-  section(9, 'Firma y sello digital');
+  S('Firma y sello digital');
   ensure(190);
   const top = y;
   const boxW = (W - 2 * MX - 16) / 2;

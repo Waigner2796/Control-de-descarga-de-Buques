@@ -13,7 +13,7 @@ import { ChartFrame, Columns, HBars } from '@/components/charts';
 import { Badge, Button, DataTable, ErrorBox, Field, FilterBar, Input, Kpi, Modal, Notice, Pagination, Section, Select, StatusBadge, Textarea, useToast, type Column } from '@/components/ui';
 import { CorrectionDialog, RecordHistory } from './CorrectionDialog';
 
-type Cause = { id: string; name: string; default_scope: string; category: { id: string; name: string; color: string } };
+type Cause = { id: string; name: string; default_scope: string; requires_description?: boolean; category: { id: string; name: string; color: string } };
 type Summary = { total_minutes: number; total_hours: number; events: number; top_cause: string | null; by_scope: Record<string, number>;
   pareto: { cause: string; category: string; color: string; minutes: number; events: number; pct: number; cum_pct: number }[];
   by_day: { date: string; minutes: number; events: number }[]; by_shift: { shift: string; minutes: number; events: number }[];
@@ -27,7 +27,7 @@ export function DowntimeForm({ open, onClose, orgId, service: fixed }: { open: b
   const [svcId, setSvcId] = useState(fixed?.id ?? '');
   const svc = fixed ?? services.data?.find((s) => s.id === svcId) ?? null;
   const tz = svc?.timezone ?? 'America/Guatemala';
-  const causes = useQuery({ queryKey: ['causes', orgId], queryFn: async () => unwrap(await supabase.from('downtime_causes').select('id, name, default_scope, category:downtime_categories(id, name, color)').eq('organization_id', orgId).eq('status', 'active').order('sort')) as unknown as Cause[] });
+  const causes = useQuery({ queryKey: ['causes', orgId], queryFn: async () => unwrap(await supabase.from('downtime_causes').select('id, name, default_scope, requires_description, category:downtime_categories(id, name, color)').eq('organization_id', orgId).eq('status', 'active').order('sort')) as unknown as Cause[] });
   const holds = useQuery({ queryKey: ['holds-of', svc?.id], enabled: !!svc, queryFn: async () => unwrap(await supabase.from('service_holds').select('id, hold_number').eq('service_id', svc!.id).order('hold_number')) as { id: string; hold_number: number }[] });
   const scales = useQuery({ queryKey: ['svc-scales', svc?.id], enabled: !!svc, queryFn: async () => unwrap(await supabase.from('service_scales').select('scale_id, scale:scales(name)').eq('service_id', svc!.id)) as unknown as { scale_id: string; scale: { name: string } }[] });
   const [v, setV] = useState({ date: '', start: '', endDate: '', end: '', cause: '', scope: 'operation', hold: '', scale: '', obs: '' });
@@ -53,6 +53,7 @@ export function DowntimeForm({ open, onClose, orgId, service: fixed }: { open: b
     if (!cause) return setErr('Seleccione el evento.');
     if (dur == null) return setErr('Indique la fecha y las horas de inicio y final.');
     if (dur <= 0) return setErr('La hora final debe ser posterior a la de inicio.');
+    if (cause.requires_description && v.obs.trim().length < 3) return setErr(`Describa qué pasó (evento «${cause.name}»).`);
     setBusy(true);
     try {
       const r = await rpc<{ duration_minutes: number }>('register_downtime', { p: { client_request_id: reqId, service_id: svc.id, cause_id: cause.id, started_local: startL, ended_local: endL, scope: v.scope, service_hold_id: v.scope === 'hold' ? v.hold : null, scale_id: v.scope === 'scale' ? v.scale : null, observations: v.obs } });
@@ -88,7 +89,9 @@ export function DowntimeForm({ open, onClose, orgId, service: fixed }: { open: b
         <Field label="Alcance" hint="Un evento de bodega o báscula no se considera parada de toda la operación."><Select value={v.scope} onChange={set('scope')}>{Object.entries(SCOPE).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select></Field>
         {v.scope === 'hold' && <Field label="Bodega afectada" required><Select value={v.hold} onChange={set('hold')}><option value="">Seleccione…</option>{holds.data?.map((h) => <option key={h.id} value={h.id}>Bodega {h.hold_number}</option>)}</Select></Field>}
         {v.scope === 'scale' && <Field label="Báscula relacionada" required><Select value={v.scale} onChange={set('scale')}><option value="">Seleccione…</option>{scales.data?.map((s) => <option key={s.scale_id} value={s.scale_id}>{s.scale.name}</option>)}</Select></Field>}
-        <Field label="Observaciones" className="sm:col-span-2"><Textarea value={v.obs} onChange={set('obs')} /></Field>
+        {cause?.requires_description
+          ? <Field label="¿Qué pasó?" required hint="Obligatorio para el evento «Otros»." className="sm:col-span-2"><Textarea value={v.obs} onChange={set('obs')} autoFocus placeholder="Describa el motivo de la detención" /></Field>
+          : <Field label="Observaciones" className="sm:col-span-2"><Textarea value={v.obs} onChange={set('obs')} /></Field>}
         <p className="sm:col-span-2 text-[13px] text-mute">Responsable del registro: <b>{ctx?.profile?.full_name || ctx?.profile?.email}</b></p>
         {err && <div className="sm:col-span-2"><ErrorBox error={err} /></div>}
       </div>

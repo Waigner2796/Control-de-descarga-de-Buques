@@ -33,7 +33,7 @@ export default function PortalServiceDetail() {
         <Kpi label="Bodegas" value={s.holds_count} />
       </div>
       <Section title="Bodegas">
-        {cargo.ship.length > 0 && <ShipView holds={cargo.ship} vesselName={s.vessel_name} className="mb-4" />}
+        {cargo.ship.length > 0 && <ShipView holds={cargo.ship} vesselName={s.vessel_name} kind={s.operation_kind} className="mb-4" />}
         <DataTable rows={cargo.cargo} rowKey={(c) => c.id} columns={[
           { key: 'h', header: 'Bodega', cell: (c) => `Bodega ${cargo.holds.find((h) => h.id === c.service_hold_id)?.hold_number ?? ''}` },
           { key: 'p', header: 'Producto', cell: (c) => <span className="inline-flex items-center gap-2"><Dot color={c.product.color} />{c.product.name}</span> },

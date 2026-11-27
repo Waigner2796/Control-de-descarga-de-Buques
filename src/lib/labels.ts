@@ -48,9 +48,9 @@ export const SCOPE: Record<string, string> = { operation: 'Toda la operación', 
 export const TIME_MODE: Record<string, string> = { manual: 'Captura manual', server_now: 'Hora actual del servidor' };
 
 export const FIELD_LABEL: Record<string, string> = {
-  truck_plate: 'Matrícula del camión', tractor_plate: 'Matrícula TC', driver_name: 'Piloto', driver_dpi: 'DPI',
+  truck_plate: 'Placa del camión', tractor_plate: 'Placa TC', driver_name: 'Piloto', driver_dpi: 'DPI',
   gross_kg: 'Peso bruto (kg)', tare_kg: 'Tara (kg)', service_hold_id: 'Bodega', product_id: 'Producto', scale_id: 'Báscula',
-  started_local: 'Hora de inicio', ended_local: 'Hora final', ticket_number: 'Número de ticket', nominal_capacity_tm: 'Capacidad nominal',
+  started_local: 'Hora de inicio', ended_local: 'Hora final', weighed_local: 'Hora del pesaje', bl_id: 'BL', ticket_number: 'Número de boleta', nominal_capacity_tm: 'Capacidad nominal',
   notes: 'Notas', cause_id: 'Evento', scope: 'Alcance', observations: 'Observaciones', status: 'Estado',
 };
 
@@ -66,6 +66,6 @@ export const AUDIT_TABLE: Record<string, string> = {
   service_scales: 'Báscula del servicio', scales: 'Báscula', scale_settings: 'Configuración de báscula', scale_users: 'Operador de báscula',
   shifts: 'Turno', weigh_tickets: 'Pesaje', cargo_adjustments: 'Ajuste de tonelaje', downtime_events: 'Tiempo perdido',
   downtime_categories: 'Categoría de tiempo perdido', downtime_causes: 'Evento del catálogo', report_versions: 'Versión de reporte',
-  digital_signatures: 'Firma', authorized_signers: 'Firmante', company_seals: 'Sello', correction_requests: 'Corrección', scale_visits: 'Visita de báscula',
+  digital_signatures: 'Firma', authorized_signers: 'Firmante', company_seals: 'Sello', correction_requests: 'Corrección', scale_visits: 'Visita de báscula', service_bls: 'BL del servicio', service_trucks: 'Camión del servicio', service_products: 'Producto del servicio',
 };
 export const AUDIT_ACTION: Record<string, string> = { INSERT: 'Creación', UPDATE: 'Modificación', DELETE: 'Eliminación' };

@@ -106,34 +106,87 @@ export async function seedDemo({ createClient, url, anonKey, serviceKey, passwor
   const L = 'BCDFGHJKLMNPRSTVWXYZ';
   const TRUCKS = NAMES.map((n) => ({ plate: `C-${ri(100, 999)}${L[ri(0, 19)]}${L[ri(0, 19)]}${L[ri(0, 19)]}`, tc: `TC-${ri(100, 999)}${L[ri(0, 19)]}${L[ri(0, 19)]}${L[ri(0, 19)]}`, driver: n, dpi: `${ri(1000, 3999)}${ri(10000, 99999)}0101`, cap: pick([30, 32, 34, 36]), tare: ri(13600, 16400) }));
 
-  async function makeService(number, customer, vessel, holds, scales, status) {
-    const id = ok(await ops.rpc('create_service', { p: { terminal_id: TERM, customer_id: customer, vessel_id: vessel, service_number: number, responsible_user_id: U[`operaciones@${domain}`], responsible_name: 'Carlos Méndez', scale_ids: scales,
-      holds: holds.map((cargo, i) => ({ hold_number: i + 1, cargo: cargo.map(([p, tm]) => ({ product_id: P[p], initial_tm: tm })) })) } }), number);
+  const META = Object.fromEntries(TRUCKS.map((t) => [t.plate, t]));
+  // products: [{ name, bag?, holds: [[bodega, TM]], bls?: [[número, TM]] }]; points: [{ scale_id } | { name, operator_ids }]
+  async function makeService(number, customer, vessel, products, points, status, { bags = false, fleet = TRUCKS.slice(0, 12), operators = [], kind = 'discharge' } = {}) {
+    const holdsCount = Math.max(...products.flatMap((p) => p.holds.map(([h]) => h)));
+    const id = ok(await ops.rpc('create_service', { p: {
+      terminal_id: TERM, customer_id: customer, ...(typeof vessel === 'string' ? { vessel_id: vessel } : { vessel }), service_number: number,
+      responsible_user_id: U[`operaciones@${domain}`], responsible_name: 'Carlos Méndez', cargo_type: bags ? 'bags' : 'bulk', holds_count: holdsCount,
+      operation_kind: kind, operator_ids: operators,
+      products: products.map((p) => ({ ...(P[p.name] ? { product_id: P[p.name] } : { product_name: p.name }), bag_weight_kg: p.bag ?? null, bag_tare_kg: p.tare ?? null, uses_bl: !!p.bls,
+        holds: p.holds.map(([h, tm]) => ({ hold_number: h, planned_tm: tm })), bls: (p.bls ?? []).map(([n, tm]) => ({ bl_number: n, planned_tm: tm })) })),
+      points, trucks: fleet.map((t) => ({ plate: t.plate, tractor_plate: t.tc, driver_name: t.driver, driver_dpi: t.dpi })) } }), number);
     if (status !== 'scheduled') ok(await ops.rpc('change_service_status', { p_service: id, p_status: status }), 'estado');
     return id;
   }
-  const tickets = { 'BAS-01': 4120, 'BAS-02': 3875, 'BAS-03': 2960 };
-  async function history(serviceId, scaleCodes, hours, clients, fraction = 1) {
-    const cargo = ok(await master.from('service_hold_cargo').select('id, service_hold_id, product_id, initial_tm, discharged_tm').eq('service_id', serviceId), 'carga');
+  const seq = {};
+  // Cada camión de la lista del servicio hace viajes redondos: su ciclo es el tiempo entre dos pasadas por báscula.
+  async function history(serviceId, hours, clientFor, fraction = 1) {
+    const cargo = ok(await master.from('service_hold_cargo').select('id, service_hold_id, product_id, initial_tm').eq('service_id', serviceId), 'carga');
+    const bls = ok(await master.from('service_bls').select('id, product_id, planned_tm, sort').eq('service_id', serviceId).order('sort'), 'bl');
+    const pts = ok(await master.from('service_scales').select('scale_id, scale:scales(code)').eq('service_id', serviceId), 'puntos');
+    const fleet = ok(await master.from('service_trucks').select('plate').eq('service_id', serviceId), 'camiones');
     const pend = Object.fromEntries(cargo.map((c) => [c.id, Number(c.initial_tm) * fraction]));
+    const blLeft = Object.fromEntries(bls.map((b) => [b.id, Number(b.planned_tm) * fraction]));
     const start = Date.now() - hours * 3600e3;
+    const passes = [];
+    for (const { plate } of fleet) {
+      const base = rr(38, 62);
+      for (let t = start + rr(0, 50) * 60e3; t < Date.now() - 15 * 60e3; t += (base + rr(-6, 9) + (rnd() < 0.07 ? rr(25, 60) : 0)) * 60e3) passes.push({ t, plate });
+    }
+    passes.sort((a, b) => a.t - b.t);
     let n = 0;
-    for (const code of scaleCodes) {
-      let t = start + rr(2, 10) * 60e3;
-      while (t < Date.now() - 20 * 60e3) {
-        const opts2 = cargo.filter((c) => pend[c.id] > 35);
-        if (!opts2.length) break;
-        const c = opts2[Math.floor(rnd() * opts2.length)];
-        const tr = pick(TRUCKS);
-        const net = Math.round(tr.cap * 1000 * rr(0.85, 0.97));
-        const tare = tr.tare + ri(-120, 120);
-        const cycle = rr(2, 5.5) + (rnd() < 0.06 ? rr(25, 45) : 0);
-        tickets[code]++;
-        const r = await clients[code].rpc('register_weigh_ticket', { p: { client_request_id: crypto.randomUUID(), scale_id: S[code], service_id: serviceId, service_hold_id: c.service_hold_id, product_id: c.product_id,
-          ticket_number: `T${code.slice(-1)}-${String(tickets[code]).padStart(6, '0')}`, truck_plate: tr.plate, tractor_plate: tr.tc, driver_name: tr.driver, driver_dpi: tr.dpi, nominal_capacity_tm: tr.cap,
-          gross: tare + net, tare, weight_unit: 'kg', started_local: local(t), ended_local: local(t + cycle * 60e3) } });
-        if (!r.error) { pend[c.id] -= net / 1000; n++; }
-        t += (cycle + rr(3, 9) + (rnd() < 0.1 ? rr(15, 40) : 0)) * 60e3;
+    for (const { t, plate } of passes) {
+      const opts2 = cargo.filter((c) => pend[c.id] > 40);
+      if (!opts2.length) break;
+      const c = opts2[Math.floor(rnd() * opts2.length)];
+      const own = bls.filter((b) => b.product_id === c.product_id);
+      const bl = own.find((b) => blLeft[b.id] > 0) ?? own.at(-1);
+      const pt = pick(pts);
+      const tr = META[plate];
+      const net = Math.round(tr.cap * 1000 * rr(0.85, 0.97));
+      const tare = tr.tare + ri(-120, 120);
+      seq[pt.scale_id] = (seq[pt.scale_id] ?? ri(2000, 4000)) + 1;
+      const r = await clientFor(pt.scale.code).rpc('register_weigh_ticket', { p: { client_request_id: crypto.randomUUID(), scale_id: pt.scale_id, service_id: serviceId,
+        service_hold_id: c.service_hold_id, product_id: c.product_id, bl_id: bl?.id ?? null,
+        ticket_number: `${pt.scale.code.replace(/\W/g, '')}-${String(seq[pt.scale_id]).padStart(6, '0')}`, truck_plate: plate, gross: tare + net, tare, weight_unit: 'kg', weighed_local: local(t) } });
+      if (!r.error) { pend[c.id] -= net / 1000; if (bl) blLeft[bl.id] -= net / 1000; n++; }
+    }
+    for (const b of bls) if (blLeft[b.id] <= 0) ok(await ops.rpc('set_bl_status', { p_bl: b.id, p_status: 'completed' }), 'BL terminado');
+    return n;
+  }
+
+  // Sacos: conteo por bodega y turno (turnos ya cerrados), sacos dañados y peso de sacos con temperatura.
+  async function bagHistory(serviceId, client, days = 2) {
+    const svc = ok(await master.from('services').select('shift_plan_id').eq('id', serviceId).single(), 'servicio');
+    const shifts = ok(await master.from('shifts').select('id, start_time').eq('plan_id', svc.shift_plan_id).eq('status', 'active').order('sort'), 'turnos');
+    const cargo = ok(await master.from('service_hold_cargo').select('service_hold_id, product_id, initial_tm').eq('service_id', serviceId), 'carga');
+    const bls = ok(await master.from('service_bls').select('id, product_id, planned_tm').eq('service_id', serviceId).order('sort'), 'bl');
+    const left = Object.fromEntries(bls.map((b) => [b.id, Number(b.planned_tm) * 1000 / 50]));
+    const today = local(Date.now()).slice(0, 10);
+    let n = 0, ticket = ri(1601000, 1601900);
+    for (let d = days; d >= 1; d--) {
+      const day = new Date(Date.parse(`${today}T12:00:00Z`) - d * 86400e3).toISOString().slice(0, 10);
+      for (const sh of shifts) {
+        const rows = cargo.map((c) => {
+          const bags = ri(700, 1900);
+          const bl = bls.find((b) => b.product_id === c.product_id && left[b.id] > bags) ?? bls.filter((b) => b.product_id === c.product_id).at(-1);
+          if (bl) left[bl.id] -= bags;
+          return { service_hold_id: c.service_hold_id, product_id: c.product_id, bl_id: bl?.id ?? null, bags };
+        });
+        const r = await client.rpc('register_bag_tally', { p: { client_request_id: crypto.randomUUID(), service_id: serviceId, shift_id: sh.id, shift_date: day, rows } });
+        if (!r.error) n++;
+        await client.rpc('set_bag_damages', { p: { service_id: serviceId, shift_id: sh.id, shift_date: day, dirty: ri(0, 2), broken: ri(0, 3), wet: ri(0, 1), to_sea: rnd() < 0.2 ? 1 : 0 } });
+        const t0 = Date.parse(`${day}T${sh.start_time.slice(0, 5)}:00Z`) + 6 * 3600e3 + 30 * 60e3;
+        for (let k = 0; k < 8; k++) {
+          ticket += ri(1, 3);
+          for (let j = 0; j < 3; j++) {
+            const at = Math.min(t0 + (k * 40 + j * 5) * 60e3, Date.now() - 5 * 60e3);
+            await client.rpc('register_bag_sample', { p: { client_request_id: crypto.randomUUID(), service_id: serviceId, product_id: cargo[k % cargo.length].product_id,
+              ticket_number: String(ticket), gross_kg: Number((50.18 + rr(0, 0.14)).toFixed(2)), temperature_c: Number(rr(30.5, 35).toFixed(1)), sampled_local: local(at) } });
+          }
+        }
       }
     }
     return n;
@@ -142,21 +195,34 @@ export async function seedDemo({ createClient, url, anonKey, serviceKey, passwor
   log('Servicios y pesajes (puede tardar ~1 min)…');
   const ops1 = await login(`bascula1@${domain}`), ops2 = await login(`bascula2@${domain}`), ops3 = await login(`bascula3@${domain}`);
   const CL = { 'BAS-01': ops1, 'BAS-02': ops2, 'BAS-03': ops3 };
-  const finalized = await makeService('SD-2026-0139', C['C-001'], V['MV Caribe Dawn'], [[['Urea', 900]], [['Fertilizante', 850]], [['Fertilizante', 700]]], [S['BAS-01'], S['BAS-02']], 'in_operation');
-  await history(finalized, ['BAS-01', 'BAS-02'], 52, CL, 0.985);
-  const kestrel = await makeService('SD-2026-0142', C['C-001'], V['MV Ocean Kestrel'], [[['Fertilizante', 3000], ['Urea', 2000]], [['Carbón', 5000]], [['Maíz', 4500], ['Trigo', 2500]], [['Maíz', 5500]], [['Trigo', 4000]]], [S['BAS-01'], S['BAS-02'], S['BAS-03']], 'in_operation');
-  log('  SD-2026-0142:', await history(kestrel, ['BAS-01', 'BAS-02', 'BAS-03'], 30, CL, 0.62), 'pesajes');
-  const sumpul = await makeService('SD-2026-0143', C['C-002'], V['MV Río Sumpul'], [[['Soya', 4200]], [['Soya', 3800], ['Maíz', 1000]], [['Maíz', 4600]], [['Trigo', 3900]]], [S['BAS-01'], S['BAS-03']], 'in_operation');
-  log('  SD-2026-0143:', await history(sumpul, ['BAS-01', 'BAS-03'], 11, CL, 0.4), 'pesajes');
-  await makeService('SD-2026-0144', C['C-003'], V['MV Santa Lucía Star'], [6200, 6400, 6400, 6400, 6100].map((t) => [['Carbón', t]]), [S['BAS-01'], S['BAS-02']], 'scheduled');
+  const clientFor = (code) => CL[code] ?? ops3;
+  const pt = (...codes) => codes.map((c) => ({ scale_id: S[c] }));
+  const finalized = await makeService('SD-2026-0139', C['C-001'], V['MV Caribe Dawn'],
+    [{ name: 'Urea', holds: [[1, 900]] }, { name: 'Fertilizante', holds: [[2, 850], [3, 700]] }], pt('BAS-01', 'BAS-02'), 'in_operation', { fleet: TRUCKS.slice(0, 5) });
+  await history(finalized, 20, clientFor, 0.985);
+  const kestrel = await makeService('SD-2026-0142', C['C-001'], V['MV Ocean Kestrel'],
+    [{ name: 'Fertilizante', holds: [[1, 3000]] }, { name: 'Urea', holds: [[1, 2000]] }, { name: 'Carbón', holds: [[2, 5000]] },
+     { name: 'Maíz', holds: [[3, 4500], [4, 5500]] }, { name: 'Trigo', holds: [[3, 2500], [5, 4000]] }], pt('BAS-01', 'BAS-02', 'BAS-03'), 'in_operation', { fleet: TRUCKS.slice(0, 14) });
+  log('  SD-2026-0142:', await history(kestrel, 30, clientFor, 0.45), 'pesajes');
+  const sumpul = await makeService('SD-2026-0143', C['C-002'], V['MV Río Sumpul'],
+    [{ name: 'Soya', holds: [[1, 4200], [2, 3800]], bls: [['COSU-551020', 5000], ['COSU-551021', 3000]] },
+     { name: 'Maíz', holds: [[2, 1000], [3, 4600]] }, { name: 'Trigo', holds: [[4, 3900]] }], pt('BAS-01', 'BAS-03'), 'in_operation', { fleet: TRUCKS.slice(4, 14) });
+  log('  SD-2026-0143:', await history(sumpul, 11, clientFor, 0.4), 'pesajes');
+  const harvest = await makeService('SD-2026-0145', C['C-002'], { name: 'MV Golden Harvest', imo_number: '9734561', flag: 'Malta' },
+    [{ name: 'Azúcar blanca refinada', bag: 50, tare: 0.16, holds: [[1, 5100], [2, 7550], [3, 7550]], bls: [['MAEU-778201', 12000], ['MAEU-778202', 8200]] },
+     { name: 'Arroz en sacos', bag: 50, tare: 0.12, holds: [[4, 2800], [5, 3300]], bls: [['MAEU-778215', 6100]] }],
+    [], 'in_operation', { bags: true, fleet: [], operators: [U[`bascula3@${domain}`]], kind: 'load' });
+  log('  SD-2026-0145:', await bagHistory(harvest, ops3), 'conteos por turno');
+  await makeService('SD-2026-0144', C['C-003'], V['MV Santa Lucía Star'],
+    [{ name: 'Carbón', holds: [6200, 6400, 6400, 6400, 6100].map((t, i) => [i + 1, t]) }], pt('BAS-01', 'BAS-02'), 'scheduled', { fleet: TRUCKS.slice(10, 18) });
 
   log('Tiempos perdidos y correcciones…');
   const causes = Object.fromEntries((ok(await sup.from('downtime_causes').select('id, name').eq('organization_id', ORG), 'causas')).map((c) => [c.name, c.id]));
   const kHolds = ok(await sup.from('service_holds').select('id, hold_number').eq('service_id', kestrel), 'bodegas');
-  const ev = [['Falta de camiones', -27, 55, 'operation'], ['Falla de grab', -22, 40, 'hold', kHolds[2].id], ['Condiciones climáticas', -16, 75, 'operation'], ['Cambio de bodega', -12, 25, 'hold', kHolds[0].id], ['Mantenimiento', -9, 30, 'scale', null, S['BAS-03']], ['Falta de camiones', -5, 35, 'operation'], ['Espera de autorización', -3, 20, 'operation']];
+  const ev = [['Falta de camiones', -27, 55, 'operation'], ['Falla de grab', -22, 40, 'hold', kHolds[2].id], ['Condiciones climáticas', -16, 75, 'operation'], ['Cambio de bodega', -12, 25, 'hold', kHolds[0].id], ['Mantenimiento', -9, 30, 'scale', null, S['BAS-03']], ['Falta de camiones', -5, 35, 'operation'], ['Espera de autorización', -3, 20, 'operation'], ['Otros', -7, 15, 'operation']];
   for (const [cause, h, mins, scope, hold, scale] of ev) {
     const t = Date.now() + h * 3600e3;
-    ok(await sup.rpc('register_downtime', { p: { client_request_id: crypto.randomUUID(), service_id: kestrel, cause_id: causes[cause], started_local: local(t), ended_local: local(t + mins * 60e3), scope, service_hold_id: hold ?? null, scale_id: scale ?? null, observations: cause === 'Condiciones climáticas' ? 'Lluvia intensa; grúas detenidas por seguridad.' : null } }), 'tiempo perdido');
+    ok(await sup.rpc('register_downtime', { p: { client_request_id: crypto.randomUUID(), service_id: kestrel, cause_id: causes[cause], started_local: local(t), ended_local: local(t + mins * 60e3), scope, service_hold_id: hold ?? null, scale_id: scale ?? null, observations: cause === 'Condiciones climáticas' ? 'Lluvia intensa; grúas detenidas por seguridad.' : cause === 'Otros' ? 'Simulacro de evacuación programado por la portuaria.' : null } }), 'tiempo perdido');
   }
   const someTickets = ok(await master.from('weigh_tickets').select('id, revision, tare_kg').eq('service_id', kestrel).eq('status', 'valid').order('registered_at', { ascending: false }).limit(3), 'tickets');
   ok(await sup.rpc('request_correction', { p_target_type: 'weigh_ticket', p_target_id: someTickets[0].id, p_action: 'update', p_changes: { tare_kg: Number(someTickets[0].tare_kg) + 220 }, p_reason: 'Tara repesada: el camión entró con lona húmeda' }), 'corrección');

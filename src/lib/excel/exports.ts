@@ -14,7 +14,7 @@ type SvcInfo = { id: string; organization_id: string; service_number: string; st
 async function service(id: string) {
   return unwrap(await supabase.from('service_overview').select('id, organization_id, service_number, status, customer_name, vessel_name, imo_number, terminal_name, timezone, actual_start, planned_start, finalized_at, responsible_name, initial_tm, discharged_tm, pending_tm, progress_pct').eq('id', id).single()) as SvcInfo;
 }
-const cycles = (s: SvcInfo) => fetchAll<CycleRow>(() => supabase.from('operational_cycles').select(CYCLE_COLS).eq('service_id', s.id).eq('status', 'valid'), [{ col: 'started_at', asc: true }, { col: 'id', asc: true }]);
+const cycles = (s: SvcInfo) => fetchAll<CycleRow>(() => supabase.from('operational_cycles').select(CYCLE_COLS).eq('service_id', s.id).eq('status', 'valid'), [{ col: 'weighed_at', asc: true }, { col: 'id', asc: true }]);
 const downtimes = (s: SvcInfo) => fetchAll<DowntimeRow>(() => supabase.from('downtime_overview').select(DOWNTIME_COLS).eq('service_id', s.id).eq('status', 'valid'), [{ col: 'started_at', asc: true }]);
 const meta = (s: SvcInfo): [string, string][] => [['Servicio', s.service_number], ['Cliente', s.customer_name], ['Buque', `${s.vessel_name}${s.imo_number ? ` · IMO ${s.imo_number}` : ''}`], ['Terminal', s.terminal_name], ['Generado', stamp()]];
 
@@ -37,18 +37,18 @@ function sheetSummary(wb: Workbook, s: SvcInfo, k: Kpis | null, trucks: number) 
 }
 
 const TRUCK_COLS: Col[] = [
-  { header: 'Correlativo', key: 'n', width: 11, fmt: F.int }, { header: 'Ticket', key: 'ticket', width: 14 }, { header: 'Fecha', key: 'date', width: 12, fmt: F.date },
-  { header: 'Hora de inicio', key: 'start', width: 10, fmt: F.time }, { header: 'Hora final', key: 'end', width: 10, fmt: F.time },
-  { header: 'Matrícula camión', key: 'plate', width: 14 }, { header: 'Matrícula TC', key: 'tc', width: 14 }, { header: 'Piloto', key: 'driver', width: 28 }, { header: 'DPI', key: 'dpi', width: 16 },
-  { header: 'Báscula', key: 'scale', width: 13 }, { header: 'Bodega', key: 'hold', width: 9, fmt: F.int }, { header: 'Producto', key: 'product', width: 14 },
+  { header: 'Correlativo', key: 'n', width: 11, fmt: F.int }, { header: 'Boleta', key: 'ticket', width: 14 }, { header: 'Fecha', key: 'date', width: 12, fmt: F.date },
+  { header: 'Hora', key: 'time', width: 10, fmt: F.time }, { header: 'Ciclo (min)', key: 'cycle', width: 11, fmt: F.min, total: 'avg' },
+  { header: 'Placa camión', key: 'plate', width: 14 }, { header: 'Placa TC', key: 'tc', width: 14 }, { header: 'Piloto', key: 'driver', width: 28 }, { header: 'DPI', key: 'dpi', width: 16 },
+  { header: 'Báscula / punto', key: 'scale', width: 15 }, { header: 'BL', key: 'bl', width: 14 }, { header: 'Bodega', key: 'hold', width: 9, fmt: F.int }, { header: 'Producto', key: 'product', width: 14 },
   { header: 'Peso bruto (kg)', key: 'gross', width: 14, fmt: F.kg, total: 'sum' }, { header: 'Tara (kg)', key: 'tare', width: 12, fmt: F.kg, total: 'sum' },
   { header: 'Peso neto (kg)', key: 'net', width: 14, fmt: F.kg, total: 'sum' }, { header: 'Peso neto (TM)', key: 'nettm', width: 13, fmt: F.tm, total: 'sum' },
   { header: 'Turno', key: 'shift', width: 10 }, { header: 'Usuario', key: 'user', width: 20 },
 ];
 const truckRows = (rows: CycleRow[], tz: string) => rows.map((r, i) => {
-  const s = localDate(r.started_at, tz); const e = localDate(r.ended_at, tz);
-  return { n: i + 1, ticket: r.ticket_number, date: s, start: s, end: e, plate: r.truck_plate, tc: r.tractor_plate ?? '', driver: r.driver_name, dpi: r.driver_dpi, scale: r.scale_name,
-    hold: r.hold_number, product: r.product_name, gross: Number(r.gross_kg), tare: Number(r.tare_kg), net: Number(r.net_kg), nettm: Number(r.net_tm), shift: r.shift_name ?? '', user: r.registered_by_name ?? '' };
+  const s = localDate(r.weighed_at, tz);
+  return { n: i + 1, ticket: r.ticket_number, date: s, time: s, cycle: r.cycle_minutes == null ? null : Number(r.cycle_minutes), plate: r.truck_plate, tc: r.tractor_plate ?? '', driver: r.driver_name, dpi: r.driver_dpi ?? '', scale: r.scale_name,
+    bl: r.bl_number ?? '', hold: r.hold_number, product: r.product_name, gross: Number(r.gross_kg), tare: Number(r.tare_kg), net: Number(r.net_kg), nettm: Number(r.net_tm), shift: r.shift_name ?? '', user: r.registered_by_name ?? '' };
 });
 function sheetTrucks(wb: Workbook, rows: CycleRow[], tz: string, m: [string, string][], name = 'Detalle de pesajes') {
   const ws = wb.addWorksheet(name);
@@ -56,16 +56,16 @@ function sheetTrucks(wb: Workbook, rows: CycleRow[], tz: string, m: [string, str
 }
 
 const CYCLE_SHEET: Col[] = [
-  { header: 'Ticket', key: 'ticket', width: 14 }, { header: 'Servicio', key: 'svc', width: 14 }, { header: 'Matrícula camión', key: 'plate', width: 14 }, { header: 'Báscula', key: 'scale', width: 13 },
-  { header: 'Bodega', key: 'hold', width: 9, fmt: F.int }, { header: 'Producto', key: 'product', width: 14 }, { header: 'Fecha', key: 'date', width: 12, fmt: F.date },
-  { header: 'Hora de inicio', key: 'start', width: 11, fmt: F.time }, { header: 'Hora final', key: 'end', width: 11, fmt: F.time },
-  { header: 'Tiempo de ciclo (min)', key: 'cycle', width: 14, fmt: F.min, total: 'avg' }, { header: 'Neto (TM)', key: 'net', width: 12, fmt: F.tm, total: 'sum' },
+  { header: 'Boleta', key: 'ticket', width: 14 }, { header: 'Servicio', key: 'svc', width: 14 }, { header: 'Placa camión', key: 'plate', width: 14 }, { header: 'Báscula / punto', key: 'scale', width: 15 },
+  { header: 'BL', key: 'bl', width: 14 }, { header: 'Bodega', key: 'hold', width: 9, fmt: F.int }, { header: 'Producto', key: 'product', width: 14 }, { header: 'Fecha', key: 'date', width: 12, fmt: F.date },
+  { header: 'Hora', key: 'time', width: 11, fmt: F.time }, { header: 'Pasada anterior', key: 'prev', width: 11, fmt: F.time },
+  { header: 'Ciclo entre pasadas (min)', key: 'cycle', width: 16, fmt: F.min, total: 'avg' }, { header: 'Neto (TM)', key: 'net', width: 12, fmt: F.tm, total: 'sum' },
   { header: 'Modalidad de hora', key: 'mode', width: 18 }, { header: 'Turno', key: 'shift', width: 10 }, { header: 'Estado', key: 'st', width: 10 },
 ];
 const cycleRows = (rows: CycleRow[], tz: string) => rows.map((r) => {
-  const s = localDate(r.started_at, tz);
-  return { ticket: r.ticket_number, svc: r.service_number, plate: r.truck_plate, scale: r.scale_name, hold: r.hold_number, product: r.product_name, date: s, start: s, end: localDate(r.ended_at, tz),
-    cycle: Number(r.cycle_minutes), net: Number(r.net_tm), mode: r.time_capture_mode === 'server_now' ? 'Hora del servidor' : 'Manual', shift: r.shift_name ?? '', st: r.status === 'valid' ? 'Válido' : 'Anulado' };
+  const s = localDate(r.weighed_at, tz);
+  return { ticket: r.ticket_number, svc: r.service_number, plate: r.truck_plate, scale: r.scale_name, bl: r.bl_number ?? '', hold: r.hold_number, product: r.product_name, date: s, time: s,
+    prev: r.prev_weighed_at ? localDate(r.prev_weighed_at, tz) : null, cycle: r.cycle_minutes == null ? null : Number(r.cycle_minutes), net: Number(r.net_tm), mode: r.time_capture_mode === 'server_now' ? 'Hora del servidor' : 'Manual', shift: r.shift_name ?? '', st: r.status === 'valid' ? 'Válido' : 'Anulado' };
 });
 
 const DT_COLS: Col[] = [
@@ -103,7 +103,7 @@ function sheetHolds(wb: Workbook, k: Kpis, m: [string, string][]) {
 function sheetHourly(wb: Workbook, rows: CycleRow[], tz: string, m: [string, string][]) {
   const g = new Map<string, { date: Date; hour: string; scale: string; hold: number; product: string; n: number; t: number }>();
   rows.forEach((r) => {
-    const d = localDate(r.started_at, tz)!; const hour = `${String(d.getUTCHours()).padStart(2, '0')}:00`;
+    const d = localDate(r.weighed_at, tz)!; const hour = `${String(d.getUTCHours()).padStart(2, '0')}:00`;
     const key = [d.toISOString().slice(0, 10), hour, r.scale_name, r.hold_number, r.product_name].join('|');
     const x = g.get(key) ?? { date: new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())), hour, scale: r.scale_name, hold: r.hold_number, product: r.product_name, n: 0, t: 0 };
     x.n++; x.t += Number(r.net_tm); g.set(key, x);

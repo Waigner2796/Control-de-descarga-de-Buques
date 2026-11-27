@@ -17,6 +17,10 @@ Plataforma multiempresa para empresas de descarga de buques graneleros: cartera 
 - **Buque dinámico** en tiempo real: cada bodega muestra sus productos y baja con cada pesaje.
 - **Ciclos con paginación del lado del servidor** (25/50/100, filtros en la URL, orden por columna, búsqueda por matrícula y ticket).
 - **Informe final automático** al finalizar el servicio, firma por un firmante autorizado, hash SHA-256, verificación pública por código y versiones sustituidas sin borrado.
+- **Servicio definido al crearlo**: descarga o carga, buque (1 a 6 bodegas), productos con cantidad por bodega, BL con su cantidad, presentación a granel o en sacos (peso y tara del saco), esquema de turnos, básculas o puntos de descarga con sus operadores y lista de camiones y pilotos propia del servicio.
+- **Granel**: boleta con una sola hora; el ciclo es el tiempo entre dos pasadas del mismo camión. El operador elige el BL activo, lo termina y pasa al siguiente, y ve en una esquina el acumulado de su báscula para cuadrar.
+- **Sacos**: conteo de sacos por bodega y turno, sacos dañados (sucios, rotos, mojados, al mar) y peso de cada saco con temperatura (neto = peso − tara general; promedios por boleta y turno).
+- **Marca de la organización**: logotipo, paleta de 2 o 3 colores y descargo de responsabilidad en el PDF; el informe incluye el barco con cantidades por bodega, el avance por turno y la verificación de sacos con gráfico.
 
 ## Demostración en línea
 
@@ -52,7 +56,7 @@ Complete `.env.local` con `VITE_SUPABASE_URL=http://127.0.0.1:54321` y la `ANON_
 npm run dev
 ```
 
-Usuarios de demostración (solo locales, contraseña `VesselDemo2026`, dominio `vessel.local`): `master@`, `operaciones@`, `supervisor@`, `bascula1@`, `bascula2@` (báscula en modalidad hora del servidor), `analista@`, `firmante@`, `admin@` (plataforma), `cliente.fertisur@` y `cliente.molinos@` (portal). El script `seed-demo` se niega a ejecutarse contra un servidor que no sea local.
+Usuarios de demostración (solo locales, contraseña `VesselDemo2026`, dominio `vessel.local`): `master@`, `operaciones@`, `supervisor@`, `bascula1@`, `bascula2@` (báscula en modalidad hora del servidor), `analista@`, `firmante@`, `admin@` (plataforma), `cliente.fertisur@` y `cliente.molinos@` (portal). `bascula3@` es el operador del servicio en sacos SD-2026-0145 (carga). El script `seed-demo` se niega a ejecutarse contra un servidor que no sea local.
 
 > En entornos donde el contenedor de Edge Functions no puede descargar paquetes npm (p. ej. inspección TLS), use `npm run edge:local` (empaqueta dependencias desde `node_modules`) y antes de hacer commit `npm run edge:prod-deps`.
 

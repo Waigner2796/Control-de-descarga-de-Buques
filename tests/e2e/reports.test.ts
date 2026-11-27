@@ -62,7 +62,7 @@ beforeAll(async () => {
   for (let i = 0; i < 3; i++) {
     const r = ok(await m.rpc('register_weigh_ticket', { p: { client_request_id: randomUUID(), scale_id: S.scale, service_id: S.service, service_hold_id: hold, product_id: S.prod,
       ticket_number: `R${run}-${i}`, truck_plate: `C-10${i}ABC`, driver_name: 'Piloto Prueba', driver_dpi: '1234567890101', gross: 45000, tare: 15000,
-      started_local: localStamp(TZ, -60 + i * 10), ended_local: localStamp(TZ, -56 + i * 10) } })) as any;
+      weighed_local: localStamp(TZ, -56 + i * 10) } })) as any;
     S.tickets.push(r.ticket_id);
   }
   // Usuarios del portal: uno por función admin-users (contraseña temporal), otro directo

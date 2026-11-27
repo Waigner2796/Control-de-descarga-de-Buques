@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, Navigate, NavLink, Outlet, useLocation } from 'react-router-dom';
 import clsx from 'clsx';
 import { useQuery } from '@tanstack/react-query';
-import { Anchor, BarChart3, Building2, ClipboardCheck, FileText, History, LayoutDashboard, LogOut, Menu, PenTool, Scale, Settings, Ship, Timer, UserRound, Users, Weight, X, ListOrdered, Globe2 } from 'lucide-react';
+import { BarChart3, Building2, ClipboardCheck, FileText, History, LayoutDashboard, LogOut, Menu, PenTool, Scale, Settings, Ship, Timer, UserRound, Users, Weight, X, ListOrdered, Globe2 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { supabase, unwrap } from '@/lib/supabase';
 import { useAssetUrl } from '@/lib/assets';
@@ -13,7 +13,7 @@ type Item = { to: string; label: string; icon: typeof Ship; perms?: string[]; en
 const NAV: { group: string; items: Item[] }[] = [
   { group: 'Operación', items: [
     { to: '/app', label: 'Dashboard', icon: LayoutDashboard, end: true, perms: ['services.view', 'weighing.register', 'customers.view'] },
-    { to: '/app/servicios', label: 'Servicios de descarga', icon: Ship, perms: ['services.view', 'weighing.register'] },
+    { to: '/app/servicios', label: 'Servicios', icon: Ship, perms: ['services.view', 'weighing.register'] },
     { to: '/app/pesaje', label: 'Registro de pesaje', icon: Weight, perms: ['weighing.register'] },
     { to: '/app/ciclos', label: 'Ciclos', icon: ListOrdered, perms: ['weighing.view_all', 'weighing.register'] },
     { to: '/app/tiempos-perdidos', label: 'Tiempos perdidos', icon: Timer, perms: ['downtime.register', 'services.view'] },
@@ -26,7 +26,6 @@ const NAV: { group: string; items: Item[] }[] = [
     { to: '/app/firmas', label: 'Firma y sello', icon: PenTool, perms: ['signatures.manage', 'reports.sign'] },
   ] },
   { group: 'Catálogos y control', items: [
-    { to: '/app/buques', label: 'Buques y productos', icon: Anchor, perms: ['vessels.manage', 'services.view'] },
     { to: '/app/basculas', label: 'Básculas', icon: Scale, perms: ['scales.manage', 'weighing.view_all'] },
     { to: '/app/usuarios', label: 'Usuarios y permisos', icon: Users, perms: ['users.manage'] },
     { to: '/app/auditoria', label: 'Auditoría', icon: History, perms: ['audit.view'] },

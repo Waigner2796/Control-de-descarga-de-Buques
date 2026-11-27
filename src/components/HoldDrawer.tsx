@@ -15,7 +15,7 @@ export function HoldDrawer({ serviceId, hold, cargo, tz, open, onClose, canWeigh
   const D = lines.reduce((a, c) => a + Number(c.discharged_tm), 0);
   const recent = useQuery({
     queryKey: ['hold-recent', hold?.id], enabled: open && !!hold && (can('weighing.view_all') || can('weighing.register')),
-    queryFn: async () => unwrap(await supabase.from('operational_cycles').select('id, ticket_number, truck_plate, scale_name, product_name, net_tm, ended_at').eq('service_hold_id', hold!.id).eq('status', 'valid').order('ended_at', { ascending: false }).limit(6)) as { id: string; ticket_number: string; truck_plate: string; scale_name: string; product_name: string; net_tm: number; ended_at: string }[],
+    queryFn: async () => unwrap(await supabase.from('operational_cycles').select('id, ticket_number, truck_plate, scale_name, product_name, net_tm, weighed_at').eq('service_hold_id', hold!.id).eq('status', 'valid').order('weighed_at', { ascending: false }).limit(6)) as { id: string; ticket_number: string; truck_plate: string; scale_name: string; product_name: string; net_tm: number; weighed_at: string }[],
   });
   return (
     <Drawer open={open && !!hold} onClose={onClose} title={hold ? `Bodega ${hold.hold_number}` : ''}
@@ -52,7 +52,7 @@ export function HoldDrawer({ serviceId, hold, cargo, tz, open, onClose, canWeigh
                 <ol className="grid gap-1.5">
                   {recent.data.map((r) => (
                     <li key={r.id} className="flex items-center gap-3 rounded-lg bg-panel/60 px-3 py-2 text-[14px]">
-                      <span className="num text-mute">{time(r.ended_at, tz)}</span>
+                      <span className="num text-mute">{time(r.weighed_at, tz)}</span>
                       <span className="min-w-0 flex-1 truncate"><b>{r.truck_plate}</b> · {r.scale_name}<span className="block text-[12.5px] text-mute">{r.product_name} · ticket {r.ticket_number}</span></span>
                       <span className="num font-semibold">{fmt2(r.net_tm)} TM</span>
                     </li>

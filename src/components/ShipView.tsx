@@ -1,7 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { fmt0 } from '@/lib/format';
 
-export type ShipProduct = { cargo_id: string; name: string; color: string; initial_tm: number; pending_tm: number };
+export type ShipProduct = { cargo_id: string; name: string; color: string; initial_tm: number; pending_tm: number; bag_weight_kg?: number | null };
 export type ShipHold = { id: string; hold_number: number; products: ShipProduct[] };
 
 const RM = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
@@ -34,9 +34,12 @@ function useAnimatedPending(holds: ShipHold[]) {
   return shown;
 }
 
-export function ShipView({ holds, selected, onSelect, vesselName, className }: {
+export function ShipView({ holds, selected, onSelect, vesselName, className, kind = 'discharge', table = true }: {
   holds: ShipHold[]; selected?: string | null; onSelect?: (holdId: string) => void; vesselName?: string; className?: string;
+  kind?: 'discharge' | 'load'; table?: boolean;
 }) {
+  const load = kind === 'load';
+  const doneWord = load ? 'cargado' : 'descargado';
   const wrap = useRef<HTMLDivElement>(null);
   const [W, setW] = useState(0);
   const uid = useId().replace(/:/g, '');
@@ -57,12 +60,11 @@ export function ShipView({ holds, selected, onSelect, vesselName, className }: {
   const pt = sorted.reduce((a, h) => a + h.products.reduce((b, p) => b + pv(p), 0), 0);
   const prog = tot ? 1 - pt / tot : 0;
 
-  const x0 = W * 0.015, x1 = W * 0.985, deck = H * 0.4, keel = H * 0.88, water = H * 0.7, lift = -prog * H * 0.06;
+  const x0 = W * 0.015, x1 = W * 0.985, deck = H * 0.4, keel = H * 0.94;
   const bowL = W * 0.07, sx0 = x1 - W * (nar ? 0.16 : 0.13), sx1 = x1 - W * 0.008, hx0 = x0 + bowL + W * 0.02, hx1 = sx0 - W * 0.012;
   const gap = Math.max(4, W * 0.007), hw = (hx1 - hx0 - gap * (n - 1)) / n;
   const top = deck + 4, bot = keel - 8, ih = bot - top, full = ih * 0.9;
   const hp = `M${x0},${deck - 16}L${x0 + bowL},${deck - 16}L${x0 + bowL},${deck}L${x1},${deck}L${x1},${deck + (keel - deck) * 0.5}Q${x1 - W * 0.004},${keel} ${x1 - W * 0.04},${keel}L${x0 + bowL * 0.95},${keel}C${x0 + bowL * 0.35},${keel} ${x0 + bowL * 0.06},${deck + (keel - deck) * 0.3} ${x0},${deck - 16}Z`;
-  let wave = ''; for (let x = 0; x < W; x += 28) wave += `Q${x + 7},${water - 3} ${x + 14},${water} Q${x + 21},${water + 3} ${x + 28},${water}`;
   const lv = Math.min(H * 0.065, 22), stop = deck - 4 * lv;
   const cnt = Math.max(2, Math.floor((sx1 - sx0) / 12)), ww = (sx1 - sx0 - 8) / cnt;
   const fx = sx0 + (sx1 - sx0) * 0.55, fw = Math.max(8, W * 0.018);
@@ -75,7 +77,7 @@ export function ShipView({ holds, selected, onSelect, vesselName, className }: {
 
   return (
     <div ref={wrap} className={`w-full min-w-0 ${className ?? ''}`}>
-      {!ready ? <div style={{ height: 260 }} aria-hidden /> : <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`Buque ${vesselName ?? ''}: ${fmt0(prog * 100)} % descargado`} className="block select-none font-cond">
+      {!ready ? <div style={{ height: 260 }} aria-hidden /> : <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`Buque ${vesselName ?? ''}: ${fmt0(prog * 100)} % ${doneWord}`} className="block select-none font-cond">
         <defs>
           {products.map((p) => (
             <pattern key={p.color} id={pid(p.color)} width="8" height="8" patternUnits="userSpaceOnUse">
@@ -84,16 +86,9 @@ export function ShipView({ holds, selected, onSelect, vesselName, className }: {
               <circle cx="6" cy="5.5" r=".9" fill={shade(p.color, 0.3)} opacity=".6" />
             </pattern>
           ))}
-          <clipPath id={`hull-${uid}`}><path d={hp} /></clipPath>
-          <linearGradient id={`wg-${uid}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="var(--water1)" /><stop offset="1" stopColor="var(--water2)" /></linearGradient>
         </defs>
-        <path d={`M0,${water}${wave}L${W},${H}L0,${H}Z`} fill={`url(#wg-${uid})`} />
-        <g transform={`translate(0,${lift.toFixed(1)})`}>
+        <g>
           <path d={hp} fill="var(--hull)" />
-          <g clipPath={`url(#hull-${uid})`}>
-            <rect x="0" y={water - lift} width={W} height={H} fill="#a8372a" />
-            <rect x="0" y={water - lift - 3} width={W} height="3" fill="#e9eef2" />
-          </g>
           <rect x={sx0} y={stop} width={sx1 - sx0} height={deck - stop} fill="var(--sup)" stroke="var(--hull)" />
           <rect x={sx0 - W * 0.012} y={stop - lv * 0.2} width={sx1 - sx0 + W * 0.012} height={lv * 0.55} fill="var(--sup)" stroke="var(--hull)" />
           {Array.from({ length: 4 }).flatMap((_, f) => Array.from({ length: cnt }).map((__, k) => (
@@ -117,13 +112,15 @@ export function ShipView({ holds, selected, onSelect, vesselName, className }: {
             const T0 = h.products.reduce((a, p) => a + Number(p.initial_tm), 0), T = T0 || 1;
             const P = h.products.reduce((a, p) => a + pv(p), 0);
             const pctDone = Math.round((1 - P / T) * 100);
-            const layers = h.products.map((p) => ({ p, v: pv(p) })).filter((l) => l.v > 0);
+            const lvl = (p: ShipProduct) => (load ? Number(p.initial_tm) - pv(p) : pv(p));
+            const L = load ? T0 - P : P;
+            const layers = h.products.map((p) => ({ p, v: lvl(p) })).filter((l) => l.v > 0);
             let y = bot;
             const sel = selected === h.id;
-            const ly = bot - full, empty = bot - (full * P) / T - ly, inside = empty < 26;
+            const ly = bot - full, empty = bot - (full * L) / T - ly, inside = empty < 26;
             return (
               <g key={h.id} role={onSelect ? 'button' : undefined} tabIndex={onSelect ? 0 : undefined}
-                aria-label={`Bodega ${h.hold_number}: ${pctDone} % descargado, ${fmt0(P)} TM pendientes`}
+                aria-label={`Bodega ${h.hold_number}: ${pctDone} % ${doneWord}, ${fmt0(P)} TM pendientes`}
                 onClick={onSelect ? () => onSelect(h.id) : undefined}
                 onKeyDown={onSelect ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(h.id); } } : undefined}
                 className={onSelect ? 'cursor-pointer outline-none [&:focus-visible>rect:last-of-type]:stroke-[rgb(var(--c-sea))]' : undefined}>
@@ -143,7 +140,7 @@ export function ShipView({ holds, selected, onSelect, vesselName, className }: {
                 <text x={hx + hw / 2} y={ly + 19} textAnchor="middle" fontSize="15" fontWeight="700" fill={inside ? '#fff' : 'rgb(var(--c-ink))'}>
                   {T0 ? `${pctDone}%` : '—'}
                 </text>
-                {!nar && empty > 46 && hw > 70 && <text x={hx + hw / 2} y={ly + 37} textAnchor="middle" fontSize="12.5" fill="rgb(var(--c-mute))">{fmt0(P)} TM</text>}
+                {!nar && empty > 46 && hw > 70 && <text x={hx + hw / 2} y={ly + 37} textAnchor="middle" fontSize="12.5" fill="rgb(var(--c-mute))">{fmt0(P)} TM pend.</text>}
                 <rect x={hx} y={top} width={hw} height={ih} fill="none" stroke={sel ? 'rgb(var(--c-sea))' : 'var(--coam)'} strokeWidth={sel ? 3 : 1} />
               </g>
             );
@@ -152,8 +149,47 @@ export function ShipView({ holds, selected, onSelect, vesselName, className }: {
       </svg>}
       <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-mute">
         {products.map((p) => <span key={p.color} className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-full" style={{ background: p.color }} />{p.name}</span>)}
-        <span>Línea punteada: carga inicial · el porcentaje es lo descargado{onSelect ? ' · toque una bodega para ver el detalle' : ''}</span>
+        <span>Línea punteada: {load ? 'cantidad a cargar' : 'carga inicial'} · el porcentaje es lo {doneWord}{onSelect ? ' · toque una bodega para ver el detalle' : ''}</span>
       </div>
+      {table && sorted.length > 0 && <ShipTable holds={sorted} pv={pv} load={load} />}
+    </div>
+  );
+}
+
+/** Cantidades por bodega: nominado, descargado/cargado y pendiente (TM y, si aplica, sacos). */
+function ShipTable({ holds, pv, load }: { holds: ShipHold[]; pv: (p: ShipProduct) => number; load: boolean }) {
+  const bags = holds.some((h) => h.products.some((p) => (p.bag_weight_kg ?? 0) > 0));
+  const sum = (h: ShipHold, f: (p: ShipProduct) => number) => h.products.reduce((a, p) => a + f(p), 0);
+  const units = (tmv: number, p: ShipProduct) => ((p.bag_weight_kg ?? 0) > 0 ? (tmv * 1000) / p.bag_weight_kg! : 0);
+  const rows: { label: string; f: (p: ShipProduct) => number; d: 0 | 3; strong?: boolean }[] = [
+    { label: load ? 'A cargar (TM)' : 'Nominado (TM)', f: (p) => Number(p.initial_tm), d: 3 },
+    { label: load ? 'Cargado (TM)' : 'Descargado (TM)', f: (p) => Number(p.initial_tm) - pv(p), d: 3, strong: true },
+    { label: 'Pendiente (TM)', f: (p) => pv(p), d: 3 },
+    ...(bags ? [
+      { label: load ? 'Sacos a cargar' : 'Sacos nominados', f: (p: ShipProduct) => units(Number(p.initial_tm), p), d: 0 as const },
+      { label: load ? 'Sacos cargados' : 'Sacos descargados', f: (p: ShipProduct) => units(Number(p.initial_tm) - pv(p), p), d: 0 as const, strong: true },
+      { label: 'Sacos pendientes', f: (p: ShipProduct) => units(pv(p), p), d: 0 as const },
+    ] : []),
+  ];
+  const fmt = (v: number, d: 0 | 3) => (d ? v.toLocaleString('es-GT', { minimumFractionDigits: 3, maximumFractionDigits: 3 }) : fmt0(v));
+  return (
+    <div className="mt-3 overflow-x-auto rounded-lg border border-line">
+      <table className="w-full min-w-[480px] text-[13px]">
+        <thead className="bg-panel text-mute">
+          <tr><th className="px-2.5 py-1.5 text-left font-semibold"><span className="sr-only">Concepto</span></th>
+            {holds.map((h) => <th key={h.id} className="px-2.5 py-1.5 text-right font-semibold">Bodega {h.hold_number}</th>)}
+            <th className="px-2.5 py-1.5 text-right font-semibold text-ink">Total</th></tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.label} className="border-t border-line">
+              <th scope="row" className="whitespace-nowrap px-2.5 py-1.5 text-left font-medium">{r.label}</th>
+              {holds.map((h) => <td key={h.id} className={`num px-2.5 py-1.5 text-right ${r.strong ? 'font-semibold' : ''}`}>{fmt(sum(h, r.f), r.d)}</td>)}
+              <td className="num px-2.5 py-1.5 text-right font-semibold">{fmt(holds.reduce((a, h) => a + sum(h, r.f), 0), r.d)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

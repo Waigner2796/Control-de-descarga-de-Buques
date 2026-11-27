@@ -1,14 +1,14 @@
 import { supabase } from './supabase';
 import { addDays, localDayStartIso } from './format';
 
-export type CycleFilters = { service?: string; vessel?: string; hold?: string; product?: string; scale?: string; shift?: string; plate?: string; ticket?: string; from?: string; to?: string; status?: string; customer?: string };
+export type CycleFilters = { service?: string; vessel?: string; hold?: string; product?: string; scale?: string; shift?: string; plate?: string; ticket?: string; from?: string; to?: string; status?: string; customer?: string; bl?: string };
 export type CycleRow = {
   id: string; service_id: string; service_number: string; vessel_name: string; customer_name: string; ticket_number: string; truck_plate: string; tractor_plate: string | null;
-  driver_name: string; driver_dpi: string; nominal_capacity_tm: number | null; gross_kg: number; tare_kg: number; net_kg: number; net_tm: number; started_at: string; ended_at: string;
-  cycle_minutes: number; time_capture_mode: string; operation_date: string; shift_name: string | null; status: string; revision: number; scale_id: string; scale_name: string;
+  driver_name: string; driver_dpi: string | null; nominal_capacity_tm: number | null; gross_kg: number; tare_kg: number; net_kg: number; net_tm: number; weighed_at: string; prev_weighed_at: string | null;
+  cycle_minutes: number | null; bl_id: string | null; bl_number: string | null; units: number | null; cargo_type: 'bulk' | 'bags'; service_truck_id: string | null; time_capture_mode: string; operation_date: string; shift_name: string | null; status: string; revision: number; scale_id: string; scale_name: string;
   service_hold_id: string; hold_number: number; product_id: string; product_name: string; product_color: string; registered_by_name: string | null; notes: string | null; terminal_id: string;
 };
-export const CYCLE_COLS = 'id, service_id, service_number, vessel_name, customer_name, ticket_number, truck_plate, tractor_plate, driver_name, driver_dpi, nominal_capacity_tm, gross_kg, tare_kg, net_kg, net_tm, started_at, ended_at, cycle_minutes, time_capture_mode, operation_date, shift_name, status, revision, scale_id, scale_name, service_hold_id, hold_number, product_id, product_name, product_color, registered_by_name, notes, terminal_id';
+export const CYCLE_COLS = 'id, service_id, service_number, vessel_name, customer_name, ticket_number, truck_plate, tractor_plate, driver_name, driver_dpi, nominal_capacity_tm, gross_kg, tare_kg, net_kg, net_tm, weighed_at, prev_weighed_at, cycle_minutes, bl_id, bl_number, units, cargo_type, service_truck_id, time_capture_mode, operation_date, shift_name, status, revision, scale_id, scale_name, service_hold_id, hold_number, product_id, product_name, product_color, registered_by_name, notes, terminal_id';
 
 const clean = (s: string) => s.replace(/[%_,()]/g, '').trim();
 
@@ -25,8 +25,9 @@ export function cyclesQuery(orgId: string, f: CycleFilters, tz: string, count = 
   if (f.status) q = q.eq('status', f.status);
   if (f.plate && clean(f.plate)) q = q.ilike('truck_plate', `%${clean(f.plate)}%`);
   if (f.ticket && clean(f.ticket)) q = q.ilike('ticket_number', `%${clean(f.ticket)}%`);
-  if (f.from) q = q.gte('started_at', localDayStartIso(f.from, tz));
-  if (f.to) q = q.lt('started_at', localDayStartIso(addDays(f.to, 1), tz));
+  if (f.bl) q = q.eq('bl_id', f.bl);
+  if (f.from) q = q.gte('weighed_at', localDayStartIso(f.from, tz));
+  if (f.to) q = q.lt('weighed_at', localDayStartIso(addDays(f.to, 1), tz));
   return q;
 }
 

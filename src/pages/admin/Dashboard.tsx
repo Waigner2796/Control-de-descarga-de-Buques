@@ -15,7 +15,7 @@ import { ChartFrame, Columns } from '@/components/charts';
 import { Badge, Button, EmptyState, FilterBar, Input, Kpi, Meter, PageHeader, Section, Select, StatusBadge } from '@/components/ui';
 
 type Summary = Record<string, number | null>;
-type Active = { id: string; service_number: string; status: string; vessel_name: string; customer_name: string; terminal_name: string; timezone: string; progress_pct: number; pending_tm: number; initial_tm: number; actual_start: string | null; estimated_end: string | null };
+type Active = { operation_kind: 'discharge' | 'load'; id: string; service_number: string; status: string; vessel_name: string; customer_name: string; terminal_name: string; timezone: string; progress_pct: number; pending_tm: number; initial_tm: number; actual_start: string | null; estimated_end: string | null };
 
 export default function Dashboard() {
   const { orgId, membership } = useOrg();
@@ -39,7 +39,7 @@ export default function Dashboard() {
   const active = useQuery({
     queryKey: ['dashboard-active', orgId, f.terminal, f.customer, f.vessel],
     queryFn: async () => {
-      let q = supabase.from('service_overview').select('id, service_number, status, vessel_name, customer_name, terminal_name, timezone, progress_pct, pending_tm, initial_tm, actual_start, estimated_end')
+      let q = supabase.from('service_overview').select('id, service_number, status, vessel_name, customer_name, terminal_name, timezone, progress_pct, pending_tm, initial_tm, actual_start, estimated_end, operation_kind')
         .eq('organization_id', orgId).in('status', ['in_operation', 'suspended', 'closing', 'preparing']).order('status');
       if (f.terminal) q = q.eq('terminal_id', f.terminal);
       if (f.customer) q = q.eq('customer_id', f.customer);
@@ -60,14 +60,14 @@ export default function Dashboard() {
   const feed = useQuery({
     queryKey: ['dashboard-feed', orgId, f.terminal],
     queryFn: async () => {
-      let q = supabase.from('operational_cycles').select('id, ticket_number, truck_plate, scale_name, vessel_name, hold_number, product_name, net_tm, ended_at, service_id').eq('organization_id', orgId).eq('status', 'valid').order('ended_at', { ascending: false }).limit(8);
+      let q = supabase.from('operational_cycles').select('id, ticket_number, truck_plate, scale_name, vessel_name, hold_number, product_name, net_tm, weighed_at, service_id').eq('organization_id', orgId).eq('status', 'valid').order('weighed_at', { ascending: false }).limit(8);
       if (f.terminal) q = q.eq('terminal_id', f.terminal);
-      return unwrap(await q) as { id: string; ticket_number: string; truck_plate: string; scale_name: string; vessel_name: string; hold_number: number; product_name: string; net_tm: number; ended_at: string }[];
+      return unwrap(await q) as { id: string; ticket_number: string; truck_plate: string; scale_name: string; vessel_name: string; hold_number: number; product_name: string; net_tm: number; weighed_at: string }[];
     },
   });
   const today = useQuery({
     queryKey: ['dashboard-scales-today', orgId],
-    queryFn: async () => unwrap(await supabase.from('weigh_tickets').select('scale_id, net_tm, ended_at').eq('organization_id', orgId).eq('status', 'valid').gte('ended_at', localDayStartIso(localDateInput(new Date(), tz), tz)).limit(5000)) as { scale_id: string; net_tm: number; ended_at: string }[],
+    queryFn: async () => unwrap(await supabase.from('weigh_tickets').select('scale_id, net_tm, weighed_at').eq('organization_id', orgId).eq('status', 'valid').gte('weighed_at', localDayStartIso(localDateInput(new Date(), tz), tz)).limit(5000)) as { scale_id: string; net_tm: number; weighed_at: string }[],
   });
   useRealtime('weigh_tickets', `organization_id=eq.${orgId}`, [['dashboard'], ['dashboard-feed'], ['dashboard-scales-today'], ['dashboard-active']]);
 
@@ -133,7 +133,7 @@ export default function Dashboard() {
                     <div className="text-[14px] text-mute">{pct(cargo.initial ? (cargo.discharged / cargo.initial) * 100 : 0)} descargado de {fmt0(cargo.initial)} TM{eta ? ` · fin estimado ${eta.toLocaleString('es-GT', { timeZone: stz, weekday: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}` : ''}</div>
                   </div>
                 </div>
-                <ShipView holds={cargo.ship} selected={holdId} onSelect={setHoldId} vesselName={sel.vessel_name} />
+                <ShipView holds={cargo.ship} selected={holdId} onSelect={setHoldId} vesselName={sel.vessel_name} kind={sel.operation_kind} />
               </>
             )}
           </>
@@ -148,7 +148,7 @@ export default function Dashboard() {
           <ol className="grid gap-1.5">
             {(feed.data ?? []).map((r) => (
               <li key={r.id} className="flex items-center gap-3 rounded-lg px-2 py-1.5 text-[14px] hover:bg-panel/60">
-                <span className="num w-11 text-mute">{time(r.ended_at, tz)}</span>
+                <span className="num w-11 text-mute">{time(r.weighed_at, tz)}</span>
                 <span className="min-w-0 flex-1 truncate"><b>{r.truck_plate}</b> · {r.scale_name}<span className="block truncate text-[12.5px] text-mute">{r.vessel_name} · Bodega {r.hold_number} · {r.product_name}</span></span>
                 <span className="num font-semibold">{fmt2(r.net_tm)} TM</span>
               </li>
@@ -162,7 +162,7 @@ export default function Dashboard() {
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {(scales.data ?? []).filter((x) => !f.terminal || x.terminal_id === f.terminal).map((sc) => {
             const l = (today.data ?? []).filter((t) => t.scale_id === sc.id);
-            const last = l.reduce<string | null>((a, t) => (!a || t.ended_at > a ? t.ended_at : a), null);
+            const last = l.reduce<string | null>((a, t) => (!a || t.weighed_at > a ? t.weighed_at : a), null);
             return (
               <div key={sc.id} className="rounded-xl border border-line p-3.5">
                 <div className="flex items-center justify-between gap-2"><b className="truncate">{sc.name}</b><StatusBadge map={{ active: { label: 'Activa', tone: 'ok' }, maintenance: { label: 'Mantenimiento', tone: 'warn' }, inactive: { label: 'Inactiva', tone: 'mute' } }} value={sc.status} /></div>

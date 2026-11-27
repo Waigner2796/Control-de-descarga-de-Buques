@@ -10,3 +10,4 @@ supabase/.temp
 coverage/
 supabase/functions/.local/
 supabase/functions/.env.local
+*.tsbuildinfo

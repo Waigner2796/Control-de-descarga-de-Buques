@@ -21,14 +21,15 @@ export function CorrectionDialog({ target, tz, onClose, mode = 'update' }: { tar
   const serviceId = target?.row.service_id;
   const holds = useQuery({ queryKey: ['corr-holds', serviceId], enabled: !!serviceId, queryFn: async () => unwrap(await supabase.from('service_hold_cargo').select('service_hold_id, product_id, hold:service_holds(hold_number), product:products(name)').eq('service_id', serviceId!)) as unknown as { service_hold_id: string; product_id: string; hold: { hold_number: number }; product: { name: string } }[] });
   const scales = useQuery({ queryKey: ['corr-scales', serviceId], enabled: !!serviceId, queryFn: async () => unwrap(await supabase.from('service_scales').select('scale_id, scale:scales(name, code)').eq('service_id', serviceId!)) as unknown as { scale_id: string; scale: { name: string; code: string } }[] });
+  const bls = useQuery({ queryKey: ['bls-of', serviceId], enabled: target?.type === 'weigh_ticket' && !!serviceId, queryFn: async () => unwrap(await supabase.from('service_bls').select('id, bl_number, product_id').eq('service_id', serviceId!).order('sort')) as { id: string; bl_number: string; product_id: string }[] });
   const causes = useQuery({ queryKey: ['causes-all'], enabled: target?.type === 'downtime_event', queryFn: async () => unwrap(await supabase.from('downtime_causes').select('id, name').eq('status', 'active').order('name')) as { id: string; name: string }[] });
 
   const initial = useMemo((): Record<string, string> => {
     if (!target) return {};
     if (target.type === 'weigh_ticket') {
       const r = target.row;
-      return { truck_plate: r.truck_plate, tractor_plate: r.tractor_plate ?? '', driver_name: r.driver_name, driver_dpi: r.driver_dpi, gross_kg: String(Number(r.gross_kg)), tare_kg: String(Number(r.tare_kg)),
-        service_hold_id: r.service_hold_id, product_id: r.product_id, scale_id: r.scale_id, started_local: localInput(r.started_at, tz), ended_local: localInput(r.ended_at, tz), ticket_number: r.ticket_number, notes: r.notes ?? '' };
+      return { truck_plate: r.truck_plate, tractor_plate: r.tractor_plate ?? '', driver_name: r.driver_name, driver_dpi: r.driver_dpi ?? '', gross_kg: String(Number(r.gross_kg)), tare_kg: String(Number(r.tare_kg)),
+        service_hold_id: r.service_hold_id, product_id: r.product_id, bl_id: r.bl_id ?? '', scale_id: r.scale_id, weighed_local: localInput(r.weighed_at, tz), ticket_number: r.ticket_number, notes: r.notes ?? '' };
     }
     const d = target.row;
     return { cause_id: d.cause_id, started_local: localInput(d.started_at, tz), ended_local: localInput(d.ended_at, tz), scope: d.scope, service_hold_id: d.service_hold_id ?? '', scale_id: d.scale_id ?? '', observations: d.observations ?? '' };
@@ -57,19 +58,19 @@ export function CorrectionDialog({ target, tz, onClose, mode = 'update' }: { tar
   };
   if (!target) return null;
   const set = (k: string) => (e: { target: { value: string } }) => setV((x) => ({ ...x, [k]: e.target.value }));
-  const title = mode === 'void' ? (target.type === 'weigh_ticket' ? `Anular ticket ${target.row.ticket_number}` : 'Anular tiempo perdido') : (target.type === 'weigh_ticket' ? `Corregir ticket ${target.row.ticket_number}` : `Corregir evento: ${target.row.cause_name}`);
+  const title = mode === 'void' ? (target.type === 'weigh_ticket' ? `Anular boleta ${target.row.ticket_number}` : 'Anular tiempo perdido') : (target.type === 'weigh_ticket' ? `Corregir boleta ${target.row.ticket_number}` : `Corregir evento: ${target.row.cause_name}`);
   return (
     <Modal open onClose={onClose} wide title={title}
       footer={<><Button onClick={onClose}>Cancelar</Button><Button variant={mode === 'void' ? 'danger' : 'primary'} loading={busy} onClick={submit}>{direct ? (mode === 'void' ? 'Anular registro' : 'Aplicar corrección') : 'Enviar a aprobación'}</Button></>}>
       <div className="grid gap-4">
         <Notice tone={direct ? 'info' : 'warn'}>
-          {direct ? 'Tiene autorización: el cambio se aplica de inmediato.' : 'Su solicitud quedará pendiente hasta que un supervisor la apruebe.'} Se conserva el registro original, el valor anterior y el nuevo, su usuario y la hora. {target.type === 'weigh_ticket' && 'Si cambia el neto, la bodega o el producto, se generan movimientos compensatorios en el saldo.'}
+          {direct ? 'Tiene autorización: el cambio se aplica de inmediato.' : 'Su solicitud quedará pendiente hasta que un supervisor la apruebe.'} Se conserva el registro original, el valor anterior y el nuevo, su usuario y la hora. {target.type === 'weigh_ticket' && 'Si cambia el neto, la bodega, el producto o el BL, se generan movimientos compensatorios en el saldo.'}
         </Notice>
         {mode === 'update' && target.type === 'weigh_ticket' && (
           <div className="grid gap-3 sm:grid-cols-3">
-            <Field label="Número de ticket"><Input value={v.ticket_number ?? ''} onChange={set('ticket_number')} /></Field>
-            <Field label="Matrícula del camión"><Input value={v.truck_plate ?? ''} onChange={(e) => setV((x) => ({ ...x, truck_plate: e.target.value.toUpperCase() }))} /></Field>
-            <Field label="Matrícula TC"><Input value={v.tractor_plate ?? ''} onChange={(e) => setV((x) => ({ ...x, tractor_plate: e.target.value.toUpperCase() }))} /></Field>
+            <Field label="Número de boleta"><Input value={v.ticket_number ?? ''} onChange={set('ticket_number')} /></Field>
+            <Field label="Placa del camión"><Input value={v.truck_plate ?? ''} onChange={(e) => setV((x) => ({ ...x, truck_plate: e.target.value.toUpperCase() }))} /></Field>
+            <Field label="Placa TC"><Input value={v.tractor_plate ?? ''} onChange={(e) => setV((x) => ({ ...x, tractor_plate: e.target.value.toUpperCase() }))} /></Field>
             <Field label="Piloto"><Input value={v.driver_name ?? ''} onChange={set('driver_name')} /></Field>
             <Field label="DPI"><Input value={v.driver_dpi ?? ''} inputMode="numeric" onChange={set('driver_dpi')} /></Field>
             <Field label="Báscula"><Select value={v.scale_id} onChange={set('scale_id')}>{scales.data?.map((s) => <option key={s.scale_id} value={s.scale_id}>{s.scale.name}</option>)}</Select></Field>
@@ -78,13 +79,14 @@ export function CorrectionDialog({ target, tz, onClose, mode = 'update' }: { tar
                 {holds.data?.sort((a, b) => a.hold.hold_number - b.hold.hold_number).map((h) => <option key={`${h.service_hold_id}|${h.product_id}`} value={`${h.service_hold_id}|${h.product_id}`}>Bodega {h.hold.hold_number} · {h.product.name}</option>)}
               </Select>
             </Field>
-            <div />
+            {bls.data?.some((b) => b.product_id === v.product_id) ? (
+              <Field label="BL"><Select value={v.bl_id ?? ''} onChange={set('bl_id')}>{bls.data.filter((b) => b.product_id === v.product_id).map((b) => <option key={b.id} value={b.id}>BL {b.bl_number}</option>)}</Select></Field>
+            ) : <div />}
             <Field label="Peso bruto (kg)"><Input type="number" className="num text-right" value={v.gross_kg ?? ''} onChange={set('gross_kg')} /></Field>
             <Field label="Tara (kg)"><Input type="number" className="num text-right" value={v.tare_kg ?? ''} onChange={set('tare_kg')} /></Field>
             <Field label="Peso neto"><div className={`num flex min-h-[40px] items-center rounded-lg bg-panel px-3 font-bold ${net > 0 ? '' : 'text-red'}`}>{net > 0 ? `${fmt2(net)} TM` : 'Bruto ≤ tara'}</div></Field>
-            <Field label="Hora de inicio"><Input type="datetime-local" value={v.started_local ?? ''} onChange={set('started_local')} /></Field>
-            <Field label="Hora final"><Input type="datetime-local" value={v.ended_local ?? ''} onChange={set('ended_local')} /></Field>
-            <Field label="Notas"><Input value={v.notes ?? ''} onChange={set('notes')} /></Field>
+            <Field label="Hora del pesaje"><Input type="datetime-local" value={v.weighed_local ?? ''} onChange={set('weighed_local')} /></Field>
+            <Field label="Notas" className="sm:col-span-2"><Input value={v.notes ?? ''} onChange={set('notes')} /></Field>
           </div>
         )}
         {mode === 'update' && target.type === 'downtime_event' && (
@@ -104,7 +106,7 @@ export function CorrectionDialog({ target, tz, onClose, mode = 'update' }: { tar
             {Object.entries(changes).map(([k, x]) => <div key={k}><span className="text-mute">{FIELD_LABEL[k] ?? k}:</span> {initial[k] || '—'} → <b>{x ?? '—'}</b></div>)}
           </div>
         )}
-        {mode === 'void' && target.type === 'weigh_ticket' && <p className="text-[14px]">El ticket {target.row.ticket_number} ({fmt2(target.row.net_tm)} TM, {dt(target.row.ended_at, tz)}) quedará anulado y su neto se devolverá al saldo de la bodega. El registro no se elimina.</p>}
+        {mode === 'void' && target.type === 'weigh_ticket' && <p className="text-[14px]">La boleta {target.row.ticket_number} ({fmt2(target.row.net_tm)} TM, {dt(target.row.weighed_at, tz)}) quedará anulado y su neto se devolverá al saldo de la bodega. El registro no se elimina.</p>}
         <Field label="Motivo de la corrección" required hint="Queda en el historial y la auditoría.">
           <Textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Ej.: tara repesada, matrícula mal digitada…" />
         </Field>

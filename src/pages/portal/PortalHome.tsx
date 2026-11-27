@@ -18,7 +18,7 @@ function LiveVessel({ s }: { s: PortalService }) {
         <div><Link to={`/portal/servicios/${s.id}`} className="font-cond text-[26px] font-bold hover:underline">{s.vessel_name}</Link><div className="text-[14px] text-mute">Servicio {s.service_number} · {s.terminal_name}</div></div>
         <div className="text-right"><div className="num text-[34px] font-bold leading-none text-portal">{pct(cargo.initial ? (cargo.discharged / cargo.initial) * 100 : 0)}</div><div className="text-[14px] text-mute">{fmt1(cargo.discharged)} de {fmt0(cargo.initial)} TM descargadas</div></div>
       </div>
-      <ShipView holds={cargo.ship} vesselName={s.vessel_name} />
+      <ShipView holds={cargo.ship} vesselName={s.vessel_name} kind={s.operation_kind} />
     </div>
   );
 }

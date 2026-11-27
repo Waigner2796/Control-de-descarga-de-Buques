@@ -32,7 +32,7 @@ function ticketPayload(o: Partial<Record<string, unknown>> = {}) {
     client_request_id: randomUUID(), scale_id: W.scale1, service_id: W.service, service_hold_id: W.hold1, product_id: W.prodFert,
     ticket_number: nextTicket(), truck_plate: 'C-123BCD', tractor_plate: 'TC-456FGH', driver_name: 'Juan Pérez López',
     driver_dpi: '2456 78901 0101', nominal_capacity_tm: 32, gross: 46000, tare: 15000, weight_unit: 'kg',
-    started_local: localStamp(TZ, -30), ended_local: localStamp(TZ, -27), ...o,
+    weighed_local: localStamp(TZ, -27), ...o,
   };
 }
 
@@ -108,7 +108,8 @@ beforeAll(async () => {
 
   // Servicio de la empresa B
   const vB = (ok(await W.c.masterB.from('vessels').insert({ organization_id: W.orgB, name: 'MV Atlantic', holds_count: 2 }).select('id').single()) as { id: string }).id;
-  W.serviceB = ok(await W.c.masterB.rpc('create_service', { p: { terminal_id: W.termB, customer_id: W.custB1, vessel_id: vB, service_number: `SV-2026-${run}` } })) as string;
+  W.serviceB = ok(await W.c.masterB.rpc('create_service', { p: { terminal_id: W.termB, customer_id: W.custB1, vessel_id: vB, service_number: `SV-2026-${run}`,
+    holds_count: 2, products: [{ product_name: 'Carbón', holds: [{ hold_number: 1, planned_tm: 1000 }] }] } })) as string;
 
   // Usuarios del portal
   for (const [k, cust] of [['cuA1', W.custA1], ['cuA2', W.custA2], ['cuB1', W.custB1]] as const) {
@@ -215,9 +216,11 @@ describe('Pesajes manuales, modalidades de hora y saldos', () => {
     expect(e2.error?.message).toMatch(/bruto debe ser mayor/);
   });
 
-  it('rechaza horas incoherentes en modalidad manual', async () => {
-    const e = await W.c.op1.rpc('register_weigh_ticket', { p: ticketPayload({ started_local: localStamp(TZ, -10), ended_local: localStamp(TZ, -20) }) });
-    expect(e.error?.message).toMatch(/hora final/);
+  it('modalidad manual: exige una sola hora y no admite horas futuras', async () => {
+    const e = await W.c.op1.rpc('register_weigh_ticket', { p: ticketPayload({ weighed_local: localStamp(TZ, 60) }) });
+    expect(e.error?.message).toMatch(/futuro/);
+    const e2 = await W.c.op1.rpc('register_weigh_ticket', { p: ticketPayload({ weighed_local: null }) });
+    expect(e2.error?.message).toMatch(/hora del pesaje/);
   });
 
   it('el operador solo registra en sus básculas autorizadas; analista y cliente no registran', async () => {
@@ -229,17 +232,12 @@ describe('Pesajes manuales, modalidades de hora y saldos', () => {
     expect(e3.error?.message).toMatch(/autorizado/);
   });
 
-  it('modalidad "hora del servidor": inicio y final los fija el servidor, no el navegador', async () => {
-    const manual = await W.c.op2.rpc('register_weigh_ticket', { p: ticketPayload({ scale_id: W.scale2, service_hold_id: W.hold2, product_id: W.prodMaiz }) });
-    expect(manual.error?.message).toMatch(/hora de inicio/);
-    const visit = ok(await W.c.op2.rpc('start_scale_visit', { p_scale: W.scale2, p_service: W.service })) as { id: string; started_at: string };
-    const stamped = ok(await W.c.op2.rpc('stamp_scale_visit_end', { p_visit: visit.id })) as { ended_at: string };
+  it('modalidad "hora del servidor": la hora la fija el servidor, no el navegador', async () => {
+    const t0 = Date.now();
     const res = ok(await W.c.op2.rpc('register_weigh_ticket', { p: ticketPayload({
-      scale_id: W.scale2, service_hold_id: W.hold2, product_id: W.prodMaiz, visit_id: visit.id,
-      started_local: '2020-01-01T00:00', ended_local: '2020-01-01T00:05' }) })) as { started_at: string; ended_at: string };
-    expect(new Date(res.started_at).toISOString()).toBe(new Date(visit.started_at).toISOString());
-    expect(new Date(res.ended_at).toISOString()).toBe(new Date(stamped.ended_at).toISOString());
-    const t = ok(await W.c.masterA.from('weigh_tickets').select('time_capture_mode').eq('visit_id', visit.id).single()) as { time_capture_mode: string };
+      scale_id: W.scale2, service_hold_id: W.hold2, product_id: W.prodMaiz, weighed_local: '2020-01-01T00:00' }) })) as { ticket_id: string; weighed_at: string };
+    expect(Math.abs(new Date(res.weighed_at).getTime() - t0)).toBeLessThan(60_000);
+    const t = ok(await W.c.masterA.from('weigh_tickets').select('time_capture_mode').eq('id', res.ticket_id).single()) as { time_capture_mode: string };
     expect(t.time_capture_mode).toBe('server_now');
   });
 
@@ -292,19 +290,23 @@ describe('Concurrencia e idempotencia', () => {
 describe('Ciclos con paginación del lado del servidor', () => {
   it('pagina, cuenta, filtra y ordena en el servidor', async () => {
     const batch = Array.from({ length: 30 }, (_, i) => ticketPayload({ service_hold_id: W.hold2, product_id: W.prodMaiz, gross: 40000, tare: 15000,
-      truck_plate: i % 2 ? 'C-777XYZ' : 'C-555ABC', started_local: localStamp(TZ, -300 + i * 5), ended_local: localStamp(TZ, -297 + i * 5) }));
+      truck_plate: i % 2 ? 'C-777XYZ' : 'C-555ABC', weighed_local: localStamp(TZ, -297 + i * 5) }));
     for (const p of batch) ok(await W.c.op1.rpc('register_weigh_ticket', { p }));
     const page1 = await W.c.supA.from('operational_cycles').select('id, truck_plate, cycle_minutes', { count: 'exact' })
-      .eq('service_id', W.service).order('started_at', { ascending: false }).range(0, 24);
+      .eq('service_id', W.service).order('weighed_at', { ascending: false }).range(0, 24);
     expect(page1.error).toBeNull();
     expect(page1.data!.length).toBe(25);
     expect(page1.count!).toBeGreaterThanOrEqual(33);
     const page2 = await W.c.supA.from('operational_cycles').select('id', { count: 'exact' }).eq('service_id', W.service)
-      .order('started_at', { ascending: false }).range(25, 49);
+      .order('weighed_at', { ascending: false }).range(25, 49);
     expect(page2.data!.length).toBe(page1.count! - 25);
     const filtered = await W.c.supA.from('operational_cycles').select('id', { count: 'exact', head: true }).eq('service_id', W.service).ilike('truck_plate', '%777%');
     expect(filtered.count).toBe(15);
     expect(page1.data!.every((r) => Number(r.cycle_minutes) >= 0)).toBe(true);
+    // Ciclo = tiempo entre dos pasadas consecutivas del mismo camión (cada 10 min en este lote).
+    const passes = ok(await W.c.supA.from('operational_cycles').select('cycle_minutes').eq('service_id', W.service).eq('truck_plate', 'C-777XYZ').order('weighed_at')) as { cycle_minutes: number | null }[];
+    expect(passes[0].cycle_minutes).toBeNull();
+    expect(passes.slice(1).every((r) => Number(r.cycle_minutes) === 10)).toBe(true);
   });
 
   it('el operador solo ve los ciclos de sus básculas', async () => {
@@ -312,6 +314,240 @@ describe('Ciclos con paginación del lado del servidor', () => {
     expect(rows.every((r) => [W.scale1, W.scale2].includes(r.scale_id))).toBe(true);
     const sup = await W.c.supA.from('weigh_tickets').select('id', { count: 'exact', head: true }).eq('service_id', W.service);
     expect(sup.count!).toBeGreaterThan(rows.length - 1);
+  });
+});
+
+describe('Servicio definido al crearlo: buque, BL, sacos, camiones y puntos de descarga', () => {
+  const S = {} as { id: string; hold1: string; hold2: string; blA: string; blB: string; point: string; truck1: string; prod: string };
+  const pay = (o: Partial<Record<string, unknown>> = {}) => ({
+    client_request_id: randomUUID(), scale_id: S.point, service_id: S.id, service_hold_id: S.hold1, bl_id: S.blA,
+    ticket_number: nextTicket(), service_truck_id: S.truck1, gross: 45000, tare: 15000, weight_unit: 'kg', weighed_local: localStamp(TZ, -5), ...o,
+  });
+  const base = () => ({
+    terminal_id: W.termA, customer_id: W.custA1, service_number: `BL-${run}`, cargo_type: 'bulk',
+    vessel: { name: `MV Bahía Serena ${run}`, flag: 'Panamá' }, holds_count: 3,
+    products: [{ product_name: `Arroz ${run}`, uses_bl: true,
+                 holds: [{ hold_number: 1, planned_tm: 600 }, { hold_number: 2, planned_tm: 400 }],
+                 bls: [{ bl_number: `BLA-${run}`, planned_tm: 700 }, { bl_number: `BLB-${run}`, planned_tm: 300 }] }],
+    points: [{ name: `Punto Muelle 4 ${run}`, operator_ids: [W.uid.op1] }],
+    trucks: [{ plate: 'c-100 aaa', driver_name: 'Pedro Ruiz' }, { plate: 'C-200BBB', driver_name: 'Luis Gómez', driver_dpi: '1234 56789 0123' }],
+  });
+
+  it('valida bodegas (1 a 6), peso del saco y que la suma de los BL cuadre', async () => {
+    const e1 = await W.c.opsA.rpc('create_service', { p: { ...base(), service_number: `X1-${run}`, holds_count: 7 } });
+    expect(e1.error?.message).toMatch(/1 a 6 bodegas/);
+    const e2 = await W.c.opsA.rpc('create_service', { p: { ...base(), service_number: `X2-${run}`, cargo_type: 'bags', products: [{ ...base().products[0], bag_weight_kg: null }] } });
+    expect(e2.error?.message).toMatch(/peso por saco/);
+    const e3 = await W.c.opsA.rpc('create_service', { p: { ...base(), service_number: `X3-${run}`, products: [{ ...base().products[0], bls: [{ bl_number: 'BL1', planned_tm: 900 }] }] } });
+    expect(e3.error?.message).toMatch(/suma de los BL/);
+    const none = ok(await W.c.opsA.from('services').select('id').in('service_number', [`X1-${run}`, `X2-${run}`, `X3-${run}`])) as unknown[];
+    expect(none.length).toBe(0);
+  });
+
+  it('crea el servicio con buque nuevo, bodegas, BL, punto de descarga y su lista de camiones', async () => {
+    S.id = ok(await W.c.opsA.rpc('create_service', { p: base() })) as string;
+    const svc = ok(await W.c.opsA.from('services').select('cargo_type, vessel:vessels(name, holds_count)').eq('id', S.id).single()) as any;
+    expect(svc.cargo_type).toBe('bulk');
+    expect(svc.vessel.name).toBe(`MV Bahía Serena ${run}`);
+    const holds = ok(await W.c.opsA.from('service_holds').select('id, hold_number').eq('service_id', S.id).order('hold_number')) as { id: string; hold_number: number }[];
+    expect(holds.map((h) => h.hold_number)).toEqual([1, 2, 3]);
+    S.hold1 = holds[0].id; S.hold2 = holds[1].id;
+    const bls = ok(await W.c.opsA.from('service_bls').select('id, bl_number, planned_tm, product_id').eq('service_id', S.id).order('sort')) as { id: string; bl_number: string; planned_tm: number; product_id: string }[];
+    expect(bls.map((b) => Number(b.planned_tm))).toEqual([700, 300]);
+    S.blA = bls[0].id; S.blB = bls[1].id; S.prod = bls[0].product_id;
+    const sp = ok(await W.c.opsA.from('service_products').select('bag_weight_kg, uses_bl').eq('service_id', S.id).single()) as { bag_weight_kg: number | null; uses_bl: boolean };
+    expect(sp.bag_weight_kg).toBeNull(); expect(sp.uses_bl).toBe(true);
+    const pts = ok(await W.c.opsA.from('service_scales').select('scale:scales(id, name, code)').eq('service_id', S.id)) as any[];
+    expect(pts[0].scale.name).toBe(`Punto Muelle 4 ${run}`);
+    S.point = pts[0].scale.id;
+    const trucks = ok(await W.c.opsA.from('service_trucks').select('id, plate, driver_name, driver_dpi').eq('service_id', S.id).order('plate')) as { id: string; plate: string; driver_dpi: string | null }[];
+    expect(trucks.map((t) => t.plate)).toEqual(['C-100AAA', 'C-200BBB']);
+    expect(trucks[1].driver_dpi).toBe('1234567890123');
+    S.truck1 = trucks[0].id;
+    ok(await W.c.opsA.rpc('change_service_status', { p_service: S.id, p_status: 'in_operation' }));
+  });
+
+  it('los camiones son del servicio: no aparecen en otros servicios ni en el portal', async () => {
+    const other = ok(await W.c.supA.from('service_trucks').select('plate').eq('service_id', W.service)) as { plate: string }[];
+    expect(other.some((t) => t.plate === 'C-200BBB')).toBe(false);
+    const portal = ok(await W.c.cuA1.from('service_trucks').select('id').eq('service_id', S.id)) as unknown[];
+    expect(portal.length).toBe(0);
+    const portalBl = ok(await W.c.cuA1.from('service_bls').select('id').eq('service_id', S.id)) as unknown[];
+    expect(portalBl.length).toBe(2);
+    const e = await W.c.analystA.rpc('upsert_service_trucks', { p_service: S.id, p_rows: [{ plate: 'C-300CCC', driver_name: 'Ana López' }] });
+    expect(e.error).toBeTruthy();
+  });
+
+  it('el pesaje usa el BL activo: producto y acumulado del BL', async () => {
+    const missing = await W.c.op1.rpc('register_weigh_ticket', { p: pay({ bl_id: null, product_id: S.prod }) });
+    expect(missing.error?.message).toMatch(/Seleccione el BL/);
+    const r = ok(await W.c.op1.rpc('register_weigh_ticket', { p: pay() })) as { net_tm: number; units: number | null; bl_discharged_tm: number };
+    expect(Number(r.net_tm)).toBe(30);
+    expect(r.units).toBeNull();
+    expect(Number(r.bl_discharged_tm)).toBe(30);
+    const row = ok(await W.c.op1.from('operational_cycles').select('bl_number, product_id, driver_name').eq('service_id', S.id).single()) as any;
+    expect(row.bl_number).toBe(`BLA-${run}`); expect(row.product_id).toBe(S.prod); expect(row.driver_name).toBe('Pedro Ruiz');
+  });
+
+  it('una placa nueva en báscula se agrega a la lista del servicio', async () => {
+    const r = ok(await W.c.op1.rpc('register_weigh_ticket', { p: pay({ service_truck_id: null, truck_plate: 'C-400DDD', driver_name: 'Mario Paz' }) })) as { new_truck: boolean };
+    expect(r.new_truck).toBe(true);
+    const t = ok(await W.c.op1.from('service_trucks').select('driver_name').eq('service_id', S.id).eq('plate', 'C-400DDD').single()) as { driver_name: string };
+    expect(t.driver_name).toBe('Mario Paz');
+  });
+
+  it('terminar un BL impide seguir registrándolo hasta reabrirlo; el operador elige el siguiente', async () => {
+    ok(await W.c.op1.rpc('set_bl_status', { p_bl: S.blA, p_status: 'completed' }));
+    const e = await W.c.op1.rpc('register_weigh_ticket', { p: pay() });
+    expect(e.error?.message).toMatch(/terminado/);
+    ok(await W.c.op1.rpc('register_weigh_ticket', { p: pay({ bl_id: S.blB, service_hold_id: S.hold2 }) }));
+    ok(await W.c.op1.rpc('set_bl_status', { p_bl: S.blA, p_status: 'open' }));
+    const k = ok(await W.c.supA.rpc('service_kpis', { p_service: S.id })) as any;
+    expect(k.cargo_type).toBe('bulk'); expect(k.operation_kind).toBe('discharge');
+    expect(k.by_bl.map((b: any) => Number(b.discharged_tm))).toEqual([60, 30]);
+    expect(k.shift_periods.length).toBeGreaterThan(0);
+  });
+
+  it('el ciclo se mide entre pasadas del mismo camión y se recalcula al anular', async () => {
+    const plate = 'C-200BBB';
+    const t = [] as string[];
+    for (const m of [-90, -60, -20]) {
+      const r = ok(await W.c.op1.rpc('register_weigh_ticket', { p: pay({ service_truck_id: null, truck_plate: plate, weighed_local: localStamp(TZ, m), gross: 20000 }) })) as { ticket_id: string };
+      t.push(r.ticket_id);
+    }
+    const cyc = async () => (ok(await W.c.supA.from('operational_cycles').select('id, cycle_minutes').eq('service_id', S.id).eq('truck_plate', plate).eq('status', 'valid').order('weighed_at')) as { id: string; cycle_minutes: number | null }[]).map((r) => r.cycle_minutes === null ? null : Number(r.cycle_minutes));
+    expect(await cyc()).toEqual([null, 30, 40]);
+    ok(await W.c.supA.rpc('request_correction', { p_target_type: 'weigh_ticket', p_target_id: t[1], p_action: 'void', p_changes: {}, p_reason: 'Boleta duplicada en prueba' }));
+    expect(await cyc()).toEqual([null, 70]);
+  });
+
+  it('corregir el BL de un pesaje traslada el acumulado entre BL', async () => {
+    const r = ok(await W.c.op1.rpc('register_weigh_ticket', { p: pay() })) as { ticket_id: string };
+    const bl = async (id: string) => Number((ok(await admin().from('service_bls').select('discharged_tm').eq('id', id).single()) as { discharged_tm: number }).discharged_tm);
+    const a0 = await bl(S.blA), b0 = await bl(S.blB);
+    ok(await W.c.supA.rpc('request_correction', { p_target_type: 'weigh_ticket', p_target_id: r.ticket_id, p_action: 'update', p_changes: { bl_id: S.blB }, p_reason: 'BL equivocado en báscula' }));
+    expect(r3(a0 - (await bl(S.blA)))).toBe(30);
+    expect(r3((await bl(S.blB)) - b0)).toBe(30);
+    for (const id of [S.blA, S.blB]) {
+      const rows = ok(await admin().from('weigh_tickets').select('net_tm').eq('bl_id', id).eq('status', 'valid')) as { net_tm: number }[];
+      expect(r3(rows.reduce((x, y) => x + Number(y.net_tm), 0))).toBe(r3(await bl(id)));
+    }
+  });
+
+  it('el acumulado del BL no se modifica directamente', async () => {
+    const e = await W.c.masterA.from('service_bls').update({ discharged_tm: 0 }).eq('id', S.blA).select();
+    expect(e.error).toBeTruthy();
+    const b = await admin().from('service_bls').update({ discharged_tm: 1 }).eq('id', S.blA).select();
+    expect(b.error?.message).toMatch(/solo cambia/);
+  });
+});
+
+describe('Servicio en sacos: conteo por bodega y turno, sacos dañados y peso de cada saco', () => {
+  const B = {} as { id: string; hold1: string; hold2: string; bl: string; prod: string; shift: string; day: string; sp: string };
+  beforeAll(async () => {
+    B.id = ok(await W.c.opsA.rpc('create_service', { p: {
+      terminal_id: W.termA, customer_id: W.custA1, service_number: `SACOS-${run}`, cargo_type: 'bags', operation_kind: 'load',
+      vessel: { name: `MV Autumn Sea ${run}` }, holds_count: 2, operator_ids: [W.uid.op2],
+      products: [{ product_name: `Azúcar blanca ${run}`, bag_weight_kg: 50, bag_tare_kg: 0.16, uses_bl: true,
+                   holds: [{ hold_number: 1, planned_tm: 100 }, { hold_number: 2, planned_tm: 50 }], bls: [{ bl_number: `SUG-${run}`, planned_tm: 150 }] }] } })) as string;
+    const holds = ok(await W.c.opsA.from('service_holds').select('id, hold_number').eq('service_id', B.id).order('hold_number')) as { id: string }[];
+    B.hold1 = holds[0].id; B.hold2 = holds[1].id;
+    const bl = ok(await W.c.opsA.from('service_bls').select('id, product_id').eq('service_id', B.id).single()) as { id: string; product_id: string };
+    B.bl = bl.id; B.prod = bl.product_id;
+    const svc = ok(await W.c.opsA.from('services').select('shift_plan_id, operation_kind').eq('id', B.id).single()) as { shift_plan_id: string; operation_kind: string };
+    expect(svc.operation_kind).toBe('load');
+    const sh = ok(await W.c.opsA.from('shifts').select('id, name').eq('plan_id', svc.shift_plan_id).order('sort')) as { id: string }[];
+    B.shift = sh[0].id; B.day = localStamp(TZ, -24 * 60).slice(0, 10);
+    ok(await W.c.opsA.rpc('change_service_status', { p_service: B.id, p_status: 'in_operation' }));
+  });
+
+  it('un servicio en sacos no registra boletas de camión', async () => {
+    ok(await W.c.masterA.rpc('add_service_point', { p_service: B.id, p: { scale_id: W.scale1 } }));
+    const e = await W.c.op1.rpc('register_weigh_ticket', { p: ticketPayload({ service_id: B.id, service_hold_id: B.hold1, product_id: B.prod, bl_id: B.bl }) });
+    expect(e.error?.message).toMatch(/sacos/);
+  });
+
+  it('el conteo por turno descuenta sacos (y TM) por bodega y BL; no excede lo pendiente', async () => {
+    const r = ok(await W.c.op2.rpc('register_bag_tally', { p: { client_request_id: randomUUID(), service_id: B.id, shift_id: B.shift, shift_date: B.day,
+      rows: [{ service_hold_id: B.hold1, bl_id: B.bl, bags: 600 }, { service_hold_id: B.hold2, bl_id: B.bl, bags: 200 }] } })) as { bags: number };
+    expect(r.bags).toBe(800);
+    const c = ok(await admin().from('service_hold_cargo').select('discharged_tm').eq('service_id', B.id).order('initial_tm', { ascending: false })) as { discharged_tm: number }[];
+    expect(c.map((x) => Number(x.discharged_tm))).toEqual([30, 10]);
+    const bl = ok(await admin().from('service_bls').select('discharged_tm').eq('id', B.bl).single()) as { discharged_tm: number };
+    expect(Number(bl.discharged_tm)).toBe(40);
+    const over = await W.c.op2.rpc('register_bag_tally', { p: { client_request_id: randomUUID(), service_id: B.id, shift_id: B.shift, shift_date: B.day,
+      rows: [{ service_hold_id: B.hold2, bl_id: B.bl, bags: 900 }] } });
+    expect(over.error?.message).toMatch(/exceden/);
+    const noBl = await W.c.op2.rpc('register_bag_tally', { p: { client_request_id: randomUUID(), service_id: B.id, shift_id: B.shift, shift_date: B.day,
+      rows: [{ service_hold_id: B.hold2, product_id: B.prod, bags: 10 }] } });
+    expect(noBl.error?.message).toMatch(/BL/);
+    const intruder = await W.c.analystA.rpc('register_bag_tally', { p: { client_request_id: randomUUID(), service_id: B.id, shift_id: B.shift, shift_date: B.day,
+      rows: [{ service_hold_id: B.hold1, bl_id: B.bl, bags: 1 }] } });
+    expect(intruder.error?.message).toMatch(/autorizado/);
+  });
+
+  it('sacos dañados por turno y avance por turno con acumulado', async () => {
+    ok(await W.c.op2.rpc('set_bag_damages', { p: { service_id: B.id, shift_id: B.shift, shift_date: B.day, dirty: 1, broken: 2, wet: 0, to_sea: 1 } }));
+    ok(await W.c.op2.rpc('set_bag_damages', { p: { service_id: B.id, shift_id: B.shift, shift_date: B.day, dirty: 0, broken: 3, wet: 0, to_sea: 1 } }));
+    const k = ok(await W.c.supA.rpc('service_kpis', { p_service: B.id })) as any;
+    expect(k.operation_kind).toBe('load');
+    expect(k.bags_in_range).toBe(800); expect(Number(k.damaged_bags)).toBe(4);
+    expect(k.shift_periods.length).toBe(1);
+    const p = k.shift_periods[0];
+    expect(p.bags).toBe(800); expect(p.cum_bags).toBe(800); expect(p.damaged.total).toBe(4);
+    expect(p.holds.map((h: any) => h.bags)).toEqual([600, 200]);
+  });
+
+  it('peso de cada saco: tara general, neto automático, temperatura obligatoria y promedio', async () => {
+    const noTemp = await W.c.op2.rpc('register_bag_sample', { p: { client_request_id: randomUUID(), service_id: B.id, product_id: B.prod, ticket_number: '1601930', gross_kg: 50.35 } });
+    expect(noTemp.error?.message).toMatch(/temperatura/);
+    for (const [g, t] of [[50.35, 33.3], [50.37, 32.1], [50.40, 34.0]]) {
+      ok(await W.c.op2.rpc('register_bag_sample', { p: { client_request_id: randomUUID(), service_id: B.id, product_id: B.prod, ticket_number: '1601930', gross_kg: g, temperature_c: t } }));
+    }
+    const rows = ok(await W.c.op2.from('bag_samples').select('net_kg, tare_kg').eq('service_id', B.id)) as { net_kg: number; tare_kg: number }[];
+    expect(rows.map((r) => Number(r.net_kg)).sort()).toEqual([50.19, 50.21, 50.24]);
+    expect(rows.every((r) => Number(r.tare_kg) === 0.16)).toBe(true);
+    const k = ok(await W.c.supA.rpc('service_kpis', { p_service: B.id })) as any;
+    expect(k.bag_samples.count).toBe(3);
+    expect(Number(k.bag_samples.avg_net_kg)).toBe(50.213);
+    expect(Number(k.bag_samples.avg_temp_c)).toBe(33.13);
+  });
+
+  it('anular un conteo revierte saldos y BL', async () => {
+    const t = ok(await admin().from('bag_tallies').select('id').eq('service_id', B.id).eq('service_hold_id', B.hold2).single()) as { id: string };
+    const e = await W.c.op2.rpc('void_bag_tally', { p_tally: t.id, p_reason: 'Conteo duplicado' });
+    expect(e.error).toBeTruthy();
+    ok(await W.c.supA.rpc('void_bag_tally', { p_tally: t.id, p_reason: 'Conteo duplicado en el turno' }));
+    const bl = ok(await admin().from('service_bls').select('discharged_tm').eq('id', B.bl).single()) as { discharged_tm: number };
+    expect(Number(bl.discharged_tm)).toBe(30);
+  });
+});
+
+describe('Configuración del Master: marca y esquemas de turnos', () => {
+  it('guarda paleta de 2–3 colores y descargo de responsabilidad; valida los códigos', async () => {
+    ok(await W.c.masterA.from('organization_settings').update({ brand_colors: ['#0f3b5f', '#f2a600', '#00b894'], report_disclaimer: 'Resultados válidos solo para la operación descrita.' }).eq('organization_id', W.orgA));
+    const bad = await W.c.masterA.from('organization_settings').update({ brand_colors: ['azul'] }).eq('organization_id', W.orgA).select();
+    expect(bad.error).toBeTruthy();
+    const op = await W.c.opsA.from('organization_settings').update({ report_disclaimer: 'x' }).eq('organization_id', W.orgA).select();
+    expect((op.data ?? []).length).toBe(0);
+  });
+
+  it('un nuevo esquema de turnos se elige al crear el servicio y define el turno de cada pesaje', async () => {
+    const plan = ok(await W.c.masterA.from('shift_plans').insert({ terminal_id: W.termA, organization_id: W.orgA, name: `Intertek ${run}` }).select('id').single()) as { id: string };
+    ok(await W.c.masterA.from('shifts').insert([
+      { terminal_id: W.termA, organization_id: W.orgA, plan_id: plan.id, name: 'Turno A', start_time: '07:00', end_time: '14:30', sort: 1 },
+      { terminal_id: W.termA, organization_id: W.orgA, plan_id: plan.id, name: 'Turno B', start_time: '14:30', end_time: '21:30', sort: 2 },
+      { terminal_id: W.termA, organization_id: W.orgA, plan_id: plan.id, name: 'Turno C', start_time: '21:30', end_time: '07:00', sort: 3 }]));
+    const id = ok(await W.c.opsA.rpc('create_service', { p: { terminal_id: W.termA, customer_id: W.custA2, service_number: `TUR-${run}`, shift_plan_id: plan.id,
+      vessel: { name: `MV Turnos ${run}` }, holds_count: 1, scale_ids: [W.scale1], products: [{ product_id: W.prodMaiz, holds: [{ hold_number: 1, planned_tm: 500 }] }] } })) as string;
+    ok(await W.c.opsA.rpc('change_service_status', { p_service: id, p_status: 'in_operation' }));
+    const day = localStamp(TZ, -24 * 60).slice(0, 10);
+    const r = ok(await W.c.op1.rpc('register_weigh_ticket', { p: ticketPayload({ service_id: id, product_id: W.prodMaiz, service_hold_id: (ok(await W.c.opsA.from('service_holds').select('id').eq('service_id', id).single()) as { id: string }).id,
+      weighed_local: `${day}T23:10` }) })) as { ticket_id: string };
+    const t = ok(await W.c.supA.from('operational_cycles').select('shift_name').eq('id', r.ticket_id).single()) as { shift_name: string };
+    expect(t.shift_name).toBe('Turno C');
+    const k = ok(await W.c.supA.rpc('service_kpis', { p_service: id })) as any;
+    expect(k.shift_periods[0].from).toBe(`${day}T21:30`);
   });
 });
 
@@ -332,6 +568,14 @@ describe('Tiempos perdidos', () => {
     const e = await W.c.supA.rpc('register_downtime', { p: { client_request_id: randomUUID(), service_id: W.service, cause_id: causeId,
       started_local: '2026-11-21T10:00', ended_local: '2026-11-21T09:00' } });
     expect(e.error?.message).toMatch(/posterior/);
+  });
+
+  it('el evento «Otros» exige escribir qué pasó', async () => {
+    const otros = ok(await W.c.supA.from('downtime_causes').select('id, requires_description').eq('organization_id', W.orgA).eq('name', 'Otros').single()) as { id: string; requires_description: boolean };
+    expect(otros.requires_description).toBe(true);
+    const e = await W.c.supA.rpc('register_downtime', { p: { client_request_id: randomUUID(), service_id: W.service, cause_id: otros.id,
+      started_local: '2026-11-21T11:00', ended_local: '2026-11-21T11:10' } });
+    expect(e.error?.message).toMatch(/Describa qué pasó/);
   });
 
   it('distingue alcance por bodega y báscula y el operador no registra tiempos perdidos', async () => {
@@ -467,11 +711,7 @@ describe('Productividad y cierre de operación', () => {
     expect(portal.totals).toEqual(k.totals);
   });
 
-  it('no permite finalizar con visitas abiertas ni sin nota si hay pendiente', async () => {
-    const v = ok(await W.c.op2.rpc('start_scale_visit', { p_scale: W.scale2, p_service: W.service })) as { id: string };
-    const e = await W.c.opsA.rpc('close_service', { p_service: W.service, p_note: 'Cierre de prueba con saldo' });
-    expect(e.error?.message).toMatch(/visita/);
-    ok(await W.c.op2.rpc('cancel_scale_visit', { p_visit: v.id, p_reason: 'Camión retirado' }));
+  it('no permite finalizar sin nota si queda saldo pendiente', async () => {
     const e2 = await W.c.opsA.rpc('close_service', { p_service: W.service });
     expect(e2.error?.message).toMatch(/pendientes/);
   });

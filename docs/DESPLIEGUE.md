@@ -81,7 +81,7 @@ Existe un entorno **solo de demostración** (datos ficticios, no apto para opera
 
 Notas:
 
-- Las migraciones 001–008 están aplicadas. Las Edge Functions `admin-users`, `report-worker` y `report-sign` se desplegaron importando el código de este repositorio fijado a un commit; después de fusionar a `main`, vuelva a desplegarlas con el comando del paso 1.3 para que queden autocontenidas.
+- Las migraciones 001–010 están aplicadas. Las Edge Functions `admin-users`, `report-worker` y `report-sign` se desplegaron importando el código de este repositorio fijado a un commit; después de fusionar a `main`, vuelva a desplegarlas con el comando del paso 1.3 para que queden autocontenidas.
 - La función `demo-bootstrap` (carga inicial única) quedó desactivada y responde 410.
 - Vercel despliega producción desde `main`; las ramas generan *previews* protegidas por Vercel Authentication.
 - Para operar con datos reales, cree **otro** proyecto Supabase siguiendo la sección 1, sin datos de demostración.
