@@ -6,19 +6,22 @@
   "description": "Vessel Control — gestión de clientes, descarga de buques, básculas, productividad y reportes",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -p tsconfig.app.json --noEmit && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc -b --noEmit",
+    "typecheck": "tsc -p tsconfig.app.json --noEmit",
     "test": "vitest run --dir tests/unit",
     "test:e2e": "vitest run --dir tests/e2e --no-file-parallelism",
     "db:reset": "supabase db reset",
     "edge:local": "node scripts/vendor-edge-deps.mjs on && supabase functions serve --env-file supabase/functions/.env.local",
-    "edge:prod-deps": "node scripts/vendor-edge-deps.mjs off"
+    "edge:prod-deps": "node scripts/vendor-edge-deps.mjs off",
+    "seed:demo": "node scripts/seed-demo.mjs"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
+    "@fontsource/barlow": "^5.1.1",
+    "@fontsource/barlow-semi-condensed": "^5.1.1",
     "@supabase/supabase-js": "^2.47.10",
     "@tanstack/react-query": "^5.62.0",
     "clsx": "^2.1.1",
