@@ -177,6 +177,15 @@ describe('Aislamiento (RLS) entre clientes y empresas', () => {
     }
   });
 
+  it('anon no puede invocar RPC; solo la verificación pública de informes', async () => {
+    for (const [f, args] of [['register_weigh_ticket', { p: {} }], ['my_context', {}], ['service_kpis', { p_service: W.service }], ['platform_create_organization', { p: { name: 'x' } }]] as const) {
+      const r = await anon().rpc(f, args);
+      expect(r.error?.code, f).toBe('42501');
+    }
+    const v = await anon().rpc('verify_report', { p_code: 'VC-NADA' });
+    expect(v.error).toBeNull();
+  });
+
   it('un cliente no puede escribir en servicios, cargas ni pesajes', async () => {
     const u = await W.c.cuA1.from('services').update({ observations: 'hack' }).eq('id', W.service).select();
     expect(u.error || (u.data ?? []).length === 0).toBeTruthy();

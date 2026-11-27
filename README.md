@@ -48,7 +48,7 @@ Complete `.env.local` con `VITE_SUPABASE_URL=http://127.0.0.1:54321` y la `ANON_
 npm run dev
 ```
 
-Usuarios de demostración (solo locales, contraseña `VesselDemo2026`): `master@vessel.local`, `operaciones@vessel.local`, `supervisor@vessel.local`, `bascula1@vessel.local`, `bascula2@vessel.local` (báscula en modalidad hora del servidor), `analista@vessel.local`, `firmante@vessel.local`, `admin@vessel.local` (plataforma), `cliente@fertisur.local` y `cliente@molinos.local` (portal). El script `seed-demo` se niega a ejecutarse contra un servidor que no sea local.
+Usuarios de demostración (solo locales, contraseña `VesselDemo2026`, dominio `vessel.local`): `master@`, `operaciones@`, `supervisor@`, `bascula1@`, `bascula2@` (báscula en modalidad hora del servidor), `analista@`, `firmante@`, `admin@` (plataforma), `cliente.fertisur@` y `cliente.molinos@` (portal). El script `seed-demo` se niega a ejecutarse contra un servidor que no sea local.
 
 > En entornos donde el contenedor de Edge Functions no puede descargar paquetes npm (p. ej. inspección TLS), use `npm run edge:local` (empaqueta dependencias desde `node_modules`) y antes de hacer commit `npm run edge:prod-deps`.
 
@@ -79,7 +79,7 @@ src/                     Frontend (pages/admin, pages/portal, components, lib)
 supabase/migrations/     Esquema, RLS, funciones transaccionales, Storage
 supabase/functions/      admin-users, report-worker, report-sign (+ _shared/report-pdf.ts)
 tests/unit, tests/e2e    Pruebas
-scripts/                 Datos de demostración y utilidades locales
+scripts/                 Datos de demostración (demo-data.mjs compartido) y utilidades locales
 legacy/                  Prototipo HTML original (referencia visual y funcional)
 .claude/skills/          Skills de diseño instaladas para futuras sesiones
 ```
