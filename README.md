@@ -18,6 +18,10 @@ Plataforma multiempresa para empresas de descarga de buques graneleros: cartera 
 - **Ciclos con paginación del lado del servidor** (25/50/100, filtros en la URL, orden por columna, búsqueda por matrícula y ticket).
 - **Informe final automático** al finalizar el servicio, firma por un firmante autorizado, hash SHA-256, verificación pública por código y versiones sustituidas sin borrado.
 
+## Demostración en línea
+
+https://vessel-control-blond.vercel.app: entorno solo de demostración, con datos ficticios. Detalles en [docs/DESPLIEGUE.md](docs/DESPLIEGUE.md#3-entorno-de-demostración-publicado).
+
 ## Puesta en marcha local
 
 Requisitos: Node 22, Docker.

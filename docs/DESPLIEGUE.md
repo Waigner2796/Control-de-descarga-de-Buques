@@ -69,7 +69,24 @@ $$);
    - `VITE_SUPABASE_ANON_KEY` = clave anon/publishable
 3. Nunca configure la clave `service_role` en Vercel.
 
-## 3. Comprobación posterior
+## 3. Entorno de demostración publicado
+
+Existe un entorno **solo de demostración** (datos ficticios, no apto para operación real):
+
+| Pieza | Valor |
+|---|---|
+| App (Vercel, proyecto `vessel-control`) | https://vessel-control-blond.vercel.app |
+| Supabase (proyecto `vessel-control`) | `haeszikengvliafzhefj` (us-east-1, plan gratuito) |
+| Usuarios | Los mismos roles que en local, con dominio `vesselcontrol.example`. La contraseña la custodia el titular; no se publica en el repositorio. |
+
+Notas:
+
+- Las migraciones 001–008 están aplicadas. Las Edge Functions `admin-users`, `report-worker` y `report-sign` se desplegaron importando el código de este repositorio fijado a un commit; después de fusionar a `main`, vuelva a desplegarlas con el comando del paso 1.3 para que queden autocontenidas.
+- La función `demo-bootstrap` (carga inicial única) quedó desactivada y responde 410.
+- Vercel despliega producción desde `main`; las ramas generan *previews* protegidas por Vercel Authentication.
+- Para operar con datos reales, cree **otro** proyecto Supabase siguiendo la sección 1, sin datos de demostración.
+
+## 4. Comprobación posterior
 
 - Inicie sesión como Master, cree una terminal, básculas, buque, productos, un cliente y un servicio.
 - Registre un pesaje, finalice el servicio, firme el informe y verifique el código en `/verificar`.
