@@ -416,6 +416,17 @@ export async function buildReportPdf(PDFLib: any, data: any, images: ReportImage
   if (dpiMode === 'masked') para('DPI con exposición limitada: se muestran solo los últimos cuatro dígitos.', 8, C.mute);
   }
 
+  // ------------------------------------------------------------------ BOLETAS DE SACOS (horizontal)
+  const bagTickets = (data.bag_tickets || []) as any[];
+  if (bags && bagTickets.length) {
+    newPage(LANDSCAPE);
+    S(`Boletas de sacos (${fmt0(new Set(bagTickets.map((b) => b.ticket)).size)} boletas)`);
+    table([{ h: 'Boleta', w: 62 }, { h: 'Placa', w: 60 }, { h: 'Placa TC', w: 56 }, { h: 'Lote', w: 60 }, { h: 'Bodega', w: 40, align: 'c' }, { h: 'BL', w: 70 },
+      { h: 'Producto', w: 86 }, { h: 'Sacos', w: 50, align: 'r' }, { h: 'TM', w: 56, align: 'r' }, { h: 'Hora', w: 76 }, { h: 'Turno', w: 56 }],
+    bagTickets.map((b) => [b.ticket, b.plate, b.tc || '—', b.lot || '—', b.hold, b.bl || '—', b.product, fmt0(b.bags), fmt3(b.net_tm), b.time, b.shift || '—']),
+    { size: 7, total: ['Total', '', '', '', '', '', '', fmt0(bagTickets.reduce((a, b) => a + Number(b.bags), 0)), fmt3(bagTickets.reduce((a, b) => a + Number(b.net_tm), 0)), '', ''] });
+  }
+
   // ------------------------------------------------------------------ VERIFICACIÓN DEL PESO DE SACOS
   const bsr = (data.bag_sample_report || []) as any[];
   if (bags && bsr.length) {

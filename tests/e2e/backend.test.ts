@@ -467,22 +467,33 @@ describe('Servicio en sacos: conteo por bodega y turno, sacos dañados y peso de
     expect(e.error?.message).toMatch(/sacos/);
   });
 
-  it('el conteo por turno descuenta sacos (y TM) por bodega y BL; no excede lo pendiente', async () => {
-    const r = ok(await W.c.op2.rpc('register_bag_tally', { p: { client_request_id: randomUUID(), service_id: B.id, shift_id: B.shift, shift_date: B.day,
-      rows: [{ service_hold_id: B.hold1, bl_id: B.bl, bags: 600 }, { service_hold_id: B.hold2, bl_id: B.bl, bags: 200 }] } })) as { bags: number };
-    expect(r.bags).toBe(800);
+  it('la boleta de sacos (placa, TC, boleta, lotes) descuenta sacos y TM por bodega y BL; no excede lo pendiente', async () => {
+    const tl = `${B.day}T10:00`;
+    const r = ok(await W.c.op2.rpc('register_bag_tally', { p: { client_request_id: randomUUID(), service_id: B.id, ticket_number: '1601930', truck_plate: 'c-777 abc', tractor_plate: 'TC-123',
+      service_hold_id: B.hold1, bl_id: B.bl, tallied_local: tl, lots: [{ lot: 'L-01', bags: 400 }, { lot: 'L-02', bags: 200 }] } })) as { bags: number; shift_name: string };
+    expect(r.bags).toBe(600);
+    expect(r.shift_name).toBeTruthy();
+    ok(await W.c.op2.rpc('register_bag_tally', { p: { client_request_id: randomUUID(), service_id: B.id, ticket_number: '1601931', truck_plate: 'C-888DEF',
+      service_hold_id: B.hold2, bl_id: B.bl, tallied_local: tl, lots: [{ lot: 'L-02', bags: 200 }] } }));
     const c = ok(await admin().from('service_hold_cargo').select('discharged_tm').eq('service_id', B.id).order('initial_tm', { ascending: false })) as { discharged_tm: number }[];
     expect(c.map((x) => Number(x.discharged_tm))).toEqual([30, 10]);
     const bl = ok(await admin().from('service_bls').select('discharged_tm').eq('id', B.bl).single()) as { discharged_tm: number };
     expect(Number(bl.discharged_tm)).toBe(40);
-    const over = await W.c.op2.rpc('register_bag_tally', { p: { client_request_id: randomUUID(), service_id: B.id, shift_id: B.shift, shift_date: B.day,
-      rows: [{ service_hold_id: B.hold2, bl_id: B.bl, bags: 900 }] } });
+    const rows = ok(await W.c.op2.from('bag_tallies').select('truck_plate, tractor_plate, lot, bags, shift_id').eq('service_id', B.id).order('bags')) as { truck_plate: string; lot: string; shift_id: string | null }[];
+    expect(rows.map((x) => x.lot)).toEqual(['L-02', 'L-02', 'L-01']);
+    expect(rows.some((x) => x.truck_plate === 'C-777ABC')).toBe(true);
+    expect(rows.every((x) => x.shift_id === B.shift)).toBe(true);
+    const dup = await W.c.op2.rpc('register_bag_tally', { p: { client_request_id: randomUUID(), service_id: B.id, ticket_number: '1601931', truck_plate: 'C-888DEF',
+      service_hold_id: B.hold2, bl_id: B.bl, lots: [{ lot: 'L-02', bags: 10 }] } });
+    expect(dup.error?.message).toMatch(/ya está registrada/);
+    const over = await W.c.op2.rpc('register_bag_tally', { p: { client_request_id: randomUUID(), service_id: B.id, ticket_number: '1601932', truck_plate: 'C-888DEF',
+      service_hold_id: B.hold2, bl_id: B.bl, lots: [{ lot: 'L-03', bags: 900 }] } });
     expect(over.error?.message).toMatch(/exceden/);
-    const noBl = await W.c.op2.rpc('register_bag_tally', { p: { client_request_id: randomUUID(), service_id: B.id, shift_id: B.shift, shift_date: B.day,
-      rows: [{ service_hold_id: B.hold2, product_id: B.prod, bags: 10 }] } });
+    const noBl = await W.c.op2.rpc('register_bag_tally', { p: { client_request_id: randomUUID(), service_id: B.id, ticket_number: '1601933', truck_plate: 'C-888DEF',
+      service_hold_id: B.hold2, product_id: B.prod, lots: [{ lot: 'L-03', bags: 10 }] } });
     expect(noBl.error?.message).toMatch(/BL/);
-    const intruder = await W.c.analystA.rpc('register_bag_tally', { p: { client_request_id: randomUUID(), service_id: B.id, shift_id: B.shift, shift_date: B.day,
-      rows: [{ service_hold_id: B.hold1, bl_id: B.bl, bags: 1 }] } });
+    const intruder = await W.c.analystA.rpc('register_bag_tally', { p: { client_request_id: randomUUID(), service_id: B.id, ticket_number: '1601934', truck_plate: 'C-888DEF',
+      service_hold_id: B.hold1, bl_id: B.bl, lots: [{ lot: 'L-03', bags: 1 }] } });
     expect(intruder.error?.message).toMatch(/autorizado/);
   });
 

@@ -157,36 +157,41 @@ export async function seedDemo({ createClient, url, anonKey, serviceKey, passwor
     return n;
   }
 
-  // Sacos: conteo por bodega y turno (turnos ya cerrados), sacos dañados y peso de sacos con temperatura.
+  // Sacos: boletas por camión (placa, TC, boleta, lote y sacos), sacos dañados por turno y peso de sacos con temperatura.
   async function bagHistory(serviceId, client, days = 2) {
     const svc = ok(await master.from('services').select('shift_plan_id').eq('id', serviceId).single(), 'servicio');
-    const shifts = ok(await master.from('shifts').select('id, start_time').eq('plan_id', svc.shift_plan_id).eq('status', 'active').order('sort'), 'turnos');
+    const shifts = ok(await master.from('shifts').select('id, start_time, end_time').eq('plan_id', svc.shift_plan_id).eq('status', 'active').order('sort'), 'turnos');
     const cargo = ok(await master.from('service_hold_cargo').select('service_hold_id, product_id, initial_tm').eq('service_id', serviceId), 'carga');
     const bls = ok(await master.from('service_bls').select('id, product_id, planned_tm').eq('service_id', serviceId).order('sort'), 'bl');
     const left = Object.fromEntries(bls.map((b) => [b.id, Number(b.planned_tm) * 1000 / 50]));
+    const fleet = TRUCKS.slice(8, 18);
     const today = local(Date.now()).slice(0, 10);
-    let n = 0, ticket = ri(1601000, 1601900);
+    let n = 0, ticket = ri(1601000, 1601900), lot = 101;
     for (let d = days; d >= 1; d--) {
       const day = new Date(Date.parse(`${today}T12:00:00Z`) - d * 86400e3).toISOString().slice(0, 10);
       for (const sh of shifts) {
-        const rows = cargo.map((c) => {
-          const bags = ri(700, 1900);
+        // Inicio del turno en hora local de Guatemala (UTC−6) → instante UTC.
+        const t0 = Date.parse(`${day}T${sh.start_time.slice(0, 5)}:00Z`) + 6 * 3600e3;
+        for (let k = 0; k < 12; k++) {
+          const at = t0 + (15 + k * 35 + ri(0, 10)) * 60e3;
+          if (at > Date.now() - 10 * 60e3) break;
+          const c = cargo[(k + d) % cargo.length];
+          const bags = ri(560, 700);
           const bl = bls.find((b) => b.product_id === c.product_id && left[b.id] > bags) ?? bls.filter((b) => b.product_id === c.product_id).at(-1);
           if (bl) left[bl.id] -= bags;
-          return { service_hold_id: c.service_hold_id, product_id: c.product_id, bl_id: bl?.id ?? null, bags };
-        });
-        const r = await client.rpc('register_bag_tally', { p: { client_request_id: crypto.randomUUID(), service_id: serviceId, shift_id: sh.id, shift_date: day, rows } });
-        if (!r.error) n++;
-        await client.rpc('set_bag_damages', { p: { service_id: serviceId, shift_id: sh.id, shift_date: day, dirty: ri(0, 2), broken: ri(0, 3), wet: ri(0, 1), to_sea: rnd() < 0.2 ? 1 : 0 } });
-        const t0 = Date.parse(`${day}T${sh.start_time.slice(0, 5)}:00Z`) + 6 * 3600e3 + 30 * 60e3;
-        for (let k = 0; k < 8; k++) {
+          const tr = fleet[k % fleet.length];
           ticket += ri(1, 3);
+          if (k % 4 === 0) lot++;
+          const lots = rnd() < 0.25 ? [{ lot: `L-${lot}`, bags: bags - 120 }, { lot: `L-${lot + 1}`, bags: 120 }] : [{ lot: `L-${lot}`, bags }];
+          const r = await client.rpc('register_bag_tally', { p: { client_request_id: crypto.randomUUID(), service_id: serviceId, ticket_number: String(ticket), truck_plate: tr.plate, tractor_plate: tr.tc,
+            service_hold_id: c.service_hold_id, product_id: c.product_id, bl_id: bl?.id ?? null, tallied_local: local(at), lots } });
+          if (!r.error) n++;
           for (let j = 0; j < 3; j++) {
-            const at = Math.min(t0 + (k * 40 + j * 5) * 60e3, Date.now() - 5 * 60e3);
-            await client.rpc('register_bag_sample', { p: { client_request_id: crypto.randomUUID(), service_id: serviceId, product_id: cargo[k % cargo.length].product_id,
-              ticket_number: String(ticket), gross_kg: Number((50.18 + rr(0, 0.14)).toFixed(2)), temperature_c: Number(rr(30.5, 35).toFixed(1)), sampled_local: local(at) } });
+            await client.rpc('register_bag_sample', { p: { client_request_id: crypto.randomUUID(), service_id: serviceId, product_id: c.product_id, ticket_number: String(ticket),
+              gross_kg: Number((50.18 + rr(0, 0.14)).toFixed(2)), temperature_c: Number(rr(30.5, 35).toFixed(1)), sampled_local: local(at + (j + 1) * 3 * 60e3) } });
           }
         }
+        await client.rpc('set_bag_damages', { p: { service_id: serviceId, shift_id: sh.id, shift_date: day, dirty: ri(0, 2), broken: ri(0, 3), wet: ri(0, 1), to_sea: rnd() < 0.2 ? 1 : 0 } });
       }
     }
     return n;
@@ -211,8 +216,8 @@ export async function seedDemo({ createClient, url, anonKey, serviceKey, passwor
   const harvest = await makeService('SD-2026-0145', C['C-002'], { name: 'MV Golden Harvest', imo_number: '9734561', flag: 'Malta' },
     [{ name: 'Azúcar blanca refinada', bag: 50, tare: 0.16, holds: [[1, 5100], [2, 7550], [3, 7550]], bls: [['MAEU-778201', 12000], ['MAEU-778202', 8200]] },
      { name: 'Arroz en sacos', bag: 50, tare: 0.12, holds: [[4, 2800], [5, 3300]], bls: [['MAEU-778215', 6100]] }],
-    [], 'in_operation', { bags: true, fleet: [], operators: [U[`bascula3@${domain}`]], kind: 'load' });
-  log('  SD-2026-0145:', await bagHistory(harvest, ops3), 'conteos por turno');
+    [], 'in_operation', { bags: true, fleet: TRUCKS.slice(8, 18), operators: [U[`bascula3@${domain}`]], kind: 'load' });
+  log('  SD-2026-0145:', await bagHistory(harvest, ops3), 'boletas de sacos');
   await makeService('SD-2026-0144', C['C-003'], V['MV Santa Lucía Star'],
     [{ name: 'Carbón', holds: [6200, 6400, 6400, 6400, 6100].map((t, i) => [i + 1, t]) }], pt('BAS-01', 'BAS-02'), 'scheduled', { fleet: TRUCKS.slice(10, 18) });
 

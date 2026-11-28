@@ -46,6 +46,7 @@ describe('Generador del PDF del informe final', () => {
   it('servicio de carga en sacos: barco por bodega, avance por turno, verificación de sacos, paleta, logo y disclaimer', async () => {
     const data = { ...samplePayload(0), cargo_type: 'bags', operation_kind: 'load', shift_plan: '3 turnos',
       settings: { dpi_exposure_in_reports: 'masked', report_footer: '', brand_colors: ['#0f3b5f', '#f2a600', '#00b894'], report_disclaimer: 'Los resultados se refieren únicamente a la operación descrita.' },
+      bag_tickets: Array.from({ length: 60 }, (_, i) => ({ ticket: String(1601900 + i), plate: `C-${100 + i}ABC`, tc: i % 3 ? `TC-${200 + i}` : null, lot: `L-${101 + Math.floor(i / 8)}`, hold: (i % 5) + 1, bl: 'MAEU-778201', product: 'Azúcar', bags: 640, net_tm: 32, time: '03/03/2026 22:10', shift: 'Turno 3' })),
       bag_sample_report: [{ shift_name: 'Turno 3', from: '03/03/2026 21:30', to: '04/03/2026 07:00', samples: 75, avg_net_kg: 50.06, avg_temp_c: 32.8,
         rows: Array.from({ length: 25 }, (_, i) => ({ ticket: String(1601930 + Math.floor(i / 11) * 10), product: 'Azúcar', samples: 3, avg_gross_kg: 50.2, avg_net_kg: 50.03 + (i % 5) * 0.02, avg_temp_c: 32 + (i % 4) * 0.5, target_net_kg: 50 })) }] };
     const pdf = await buildReportPdf(PDFLib, data, {}, { mode: 'draft', version: 1, verificationCode: 'VC-SACO-AAAA-BBBB' });

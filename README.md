@@ -19,7 +19,7 @@ Plataforma multiempresa para empresas de descarga de buques graneleros: cartera 
 - **Informe final automático** al finalizar el servicio, firma por un firmante autorizado, hash SHA-256, verificación pública por código y versiones sustituidas sin borrado.
 - **Servicio definido al crearlo**: descarga o carga, buque (1 a 6 bodegas), productos con cantidad por bodega, BL con su cantidad, presentación a granel o en sacos (peso y tara del saco), esquema de turnos, básculas o puntos de descarga con sus operadores y lista de camiones y pilotos propia del servicio.
 - **Granel**: boleta con una sola hora; el ciclo es el tiempo entre dos pasadas del mismo camión. El operador elige el BL activo, lo termina y pasa al siguiente, y ve en una esquina el acumulado de su báscula para cuadrar.
-- **Sacos**: conteo de sacos por bodega y turno, sacos dañados (sucios, rotos, mojados, al mar) y peso de cada saco con temperatura (neto = peso − tara general; promedios por boleta y turno).
+- **Sacos**: boleta por camión (placa, TC, número de boleta, bodega, BL y lotes con sus sacos; el turno sale de la hora), sacos dañados (sucios, rotos, mojados, al mar) y peso de cada saco con temperatura (neto = peso − tara general; promedios por boleta y turno).
 - **Marca de la organización**: logotipo, paleta de 2 o 3 colores y descargo de responsabilidad en el PDF; el informe incluye el barco con cantidades por bodega, el avance por turno y la verificación de sacos con gráfico.
 
 ## Demostración en línea

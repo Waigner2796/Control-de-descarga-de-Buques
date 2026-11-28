@@ -221,9 +221,15 @@ create table public.bag_tallies (
   service_hold_id  uuid not null references public.service_holds(id) on delete restrict,
   product_id       uuid not null references public.products(id) on delete restrict,
   bl_id            uuid references public.service_bls(id) on delete restrict,
-  shift_id         uuid not null references public.shifts(id) on delete restrict,
-  period_start     timestamptz not null,
-  period_end       timestamptz not null,
+  -- Boleta del camión: número, placas y lote; una fila por lote de la boleta.
+  ticket_number    text not null check (length(btrim(ticket_number)) between 1 and 40),
+  truck_plate      text not null check (truck_plate = upper(btrim(truck_plate)) and length(truck_plate) between 2 and 20),
+  tractor_plate    text check (tractor_plate is null or length(tractor_plate) between 2 and 20),
+  lot              text check (lot is null or length(btrim(lot)) between 1 and 60),
+  tallied_at       timestamptz not null,
+  shift_id         uuid references public.shifts(id) on delete restrict,
+  period_start     timestamptz,
+  period_end       timestamptz,
   bags             int not null check (bags > 0),
   net_tm           numeric(14,3) not null check (net_tm > 0),
   operation_date   date not null,
@@ -237,11 +243,13 @@ create table public.bag_tallies (
   registered_by_name text,
   registered_at    timestamptz not null default now(),
   updated_at       timestamptz not null default now(),
-  check (period_end > period_start)
+  check (period_end is null or period_end > period_start)
 );
-create index bag_tallies_service_idx on public.bag_tallies (service_id, period_start);
+create index bag_tallies_service_idx on public.bag_tallies (service_id, tallied_at desc);
+create index bag_tallies_period_idx on public.bag_tallies (service_id, period_start);
 create index bag_tallies_cargo_idx on public.bag_tallies (cargo_id);
 create index bag_tallies_batch_idx on public.bag_tallies (batch_id);
+create unique index bag_tallies_ticket_lot_uq on public.bag_tallies (service_id, lower(ticket_number), lower(coalesce(lot, ''))) where status = 'valid';
 create trigger bag_tallies_touch before update on public.bag_tallies for each row execute function app.touch_updated_at();
 create trigger audit_bag_tallies after insert or update on public.bag_tallies for each row execute function app.audit_trigger();
 create trigger bag_tallies_no_delete before delete on public.bag_tallies for each row execute function app.prevent_delete();
@@ -336,13 +344,15 @@ begin
   period_end := app.shift_period_end(shift.id, period_start);
 end $$;
 
--- Registra el conteo de sacos de un turno (varias bodegas a la vez) y descuenta los saldos.
+-- Registra la boleta de sacos de un camión (placa, TC, número de boleta, bodega, BL y
+-- uno o varios lotes con su cantidad de sacos). El turno se deduce de la hora.
 create or replace function public.register_bag_tally(p jsonb) returns jsonb
 language plpgsql security definer set search_path = '' as $$
 declare
   v_batch uuid := nullif(p ->> 'client_request_id', '')::uuid;
-  v_svc public.services; v_per record; r jsonb; v_cargo public.service_hold_cargo; v_sp public.service_products; v_bl public.service_bls;
-  v_prod uuid; v_bags int; v_tm numeric; v_bal numeric; v_id uuid; v_n int := 0; v_total int := 0; v_hold_no int;
+  v_svc public.services; r jsonb; v_cargo public.service_hold_cargo; v_sp public.service_products; v_bl public.service_bls;
+  v_prod uuid; v_bags int; v_tm numeric; v_bal numeric; v_pend numeric; v_id uuid; v_n int := 0; v_total int := 0; v_total_tm numeric := 0; v_hold_no int;
+  v_number text; v_plate text; v_tc text; v_lot text; v_at timestamptz; v_shift uuid; v_ps timestamptz; v_pe timestamptz; v_constraint text;
 begin
   if auth.uid() is null then raise exception 'No autenticado' using errcode = '42501'; end if;
   if v_batch is null then raise exception 'Falta client_request_id' using errcode = '22023'; end if;
@@ -353,56 +363,73 @@ begin
   if exists (select 1 from public.bag_tallies where batch_id = v_batch) then
     return jsonb_build_object('duplicate', true, 'bags', (select sum(bags) from public.bag_tallies where batch_id = v_batch));
   end if;
-  if v_svc.cargo_type <> 'bags' then raise exception 'El conteo por turno es para servicios en sacos' using errcode = '22023'; end if;
+  if v_svc.cargo_type <> 'bags' then raise exception 'La boleta de sacos es para servicios en sacos' using errcode = '22023'; end if;
   if v_svc.status <> 'in_operation' then
     raise exception 'El servicio % no está en operación (estado: %)', v_svc.service_number, v_svc.status using errcode = '22023'; end if;
-  select * into v_per from app.service_shift_period(v_svc.id, nullif(p ->> 'shift_id', '')::uuid, nullif(p ->> 'shift_date', '')::date);
-  if v_per.period_start > now() + interval '1 hour' then raise exception 'El turno aún no ha comenzado' using errcode = '22023'; end if;
 
-  for r in select * from jsonb_array_elements(coalesce(p -> 'rows', '[]'::jsonb)) loop
+  v_number := app.req_text(p, 'ticket_number');
+  v_plate := app.norm_plate(p ->> 'truck_plate');
+  if v_plate is null or length(v_plate) < 2 then raise exception 'Ingrese la placa del camión' using errcode = '22023'; end if;
+  v_tc := app.norm_plate(p ->> 'tractor_plate');
+  v_at := coalesce(app.local_to_ts(v_svc.terminal_id, p ->> 'tallied_local'), now());
+  if v_at > now() + interval '5 minutes' then raise exception 'La hora de la boleta no puede estar en el futuro' using errcode = '22023'; end if;
+  v_shift := app.service_shift_for(v_svc.id, v_at);
+  if v_shift is not null then v_ps := app.shift_period_start(v_shift, v_at); v_pe := app.shift_period_end(v_shift, v_ps); end if;
+
+  if nullif(p ->> 'bl_id', '') is not null then
+    select * into v_bl from public.service_bls where id = (p ->> 'bl_id')::uuid and service_id = v_svc.id;
+    if not found then raise exception 'El BL no pertenece al servicio' using errcode = '22023'; end if;
+  end if;
+  v_prod := coalesce(v_bl.product_id, nullif(p ->> 'product_id', '')::uuid);
+  select * into v_sp from public.service_products where service_id = v_svc.id and product_id = v_prod;
+  if not found then raise exception 'Seleccione un producto del servicio' using errcode = '22023'; end if;
+  if v_sp.uses_bl and v_bl.id is null then raise exception 'Seleccione el BL de la boleta' using errcode = '22023'; end if;
+  if coalesce(v_sp.bag_weight_kg, 0) <= 0 then raise exception 'El producto no tiene peso por saco configurado' using errcode = '22023'; end if;
+  select * into v_cargo from public.service_hold_cargo
+   where service_id = v_svc.id and service_hold_id = nullif(p ->> 'service_hold_id', '')::uuid and product_id = v_prod for update;
+  if not found then raise exception 'La bodega no contiene ese producto en este servicio' using errcode = '22023'; end if;
+  if v_bl.id is not null then
+    select * into v_bl from public.service_bls where id = v_bl.id for update;
+    if v_bl.status <> 'open' then raise exception 'El BL % está terminado; reábralo para registrar', v_bl.bl_number using errcode = '22023'; end if;
+  end if;
+
+  for r in select * from jsonb_array_elements(coalesce(p -> 'lots', jsonb_build_array(jsonb_build_object('lot', p ->> 'lot', 'bags', p ->> 'bags')))) loop
     v_bags := nullif(r ->> 'bags', '')::int;
     if v_bags is null or v_bags = 0 then continue; end if;
     if v_bags < 0 then raise exception 'Los sacos deben ser mayores que cero' using errcode = '22023'; end if;
-    v_bl := null;
-    if nullif(r ->> 'bl_id', '') is not null then
-      select * into v_bl from public.service_bls where id = (r ->> 'bl_id')::uuid and service_id = v_svc.id;
-      if not found then raise exception 'El BL no pertenece al servicio' using errcode = '22023'; end if;
-    end if;
-    v_prod := coalesce(v_bl.product_id, nullif(r ->> 'product_id', '')::uuid);
-    select * into v_sp from public.service_products where service_id = v_svc.id and product_id = v_prod;
-    if not found then raise exception 'Seleccione un producto del servicio' using errcode = '22023'; end if;
-    if v_sp.uses_bl and v_bl.id is null then raise exception 'Seleccione el BL de cada conteo' using errcode = '22023'; end if;
-    if coalesce(v_sp.bag_weight_kg, 0) <= 0 then raise exception 'El producto no tiene peso por saco configurado' using errcode = '22023'; end if;
-    select * into v_cargo from public.service_hold_cargo
-     where service_id = v_svc.id and service_hold_id = nullif(r ->> 'service_hold_id', '')::uuid and product_id = v_prod for update;
-    if not found then raise exception 'La bodega no contiene ese producto en este servicio' using errcode = '22023'; end if;
-    if v_bl.id is not null then
-      select * into v_bl from public.service_bls where id = v_bl.id for update;
-      if v_bl.status <> 'open' then raise exception 'El BL % está terminado; reábralo para registrar', v_bl.bl_number using errcode = '22023'; end if;
-    end if;
+    v_lot := nullif(btrim(coalesce(r ->> 'lot', '')), '');
     v_tm := round(v_bags * v_sp.bag_weight_kg / 1000.0, 3);
-    if v_tm > v_cargo.initial_tm - v_cargo.discharged_tm then
+    select initial_tm - discharged_tm into v_pend from public.service_hold_cargo where id = v_cargo.id;
+    if v_tm > v_pend then
       select hold_number into v_hold_no from public.service_holds where id = v_cargo.service_hold_id;
-      raise exception 'Los % sacos exceden lo pendiente de la bodega % (% sacos)', v_bags, v_hold_no,
-        floor((v_cargo.initial_tm - v_cargo.discharged_tm) * 1000 / v_sp.bag_weight_kg) using errcode = '22023';
+      raise exception 'Los % sacos exceden lo pendiente de la bodega % (% sacos)', v_bags, v_hold_no, floor(v_pend * 1000 / v_sp.bag_weight_kg) using errcode = '22023';
     end if;
-    insert into public.bag_tallies (organization_id, terminal_id, service_id, cargo_id, service_hold_id, product_id, bl_id, shift_id,
-      period_start, period_end, bags, net_tm, operation_date, notes, batch_id, registered_by, registered_by_name)
-    values (v_svc.organization_id, v_svc.terminal_id, v_svc.id, v_cargo.id, v_cargo.service_hold_id, v_prod, v_bl.id, (v_per.shift).id,
-      v_per.period_start, v_per.period_end, v_bags, v_tm, app.local_date(v_svc.terminal_id, v_per.period_start), app.opt_text(p, 'notes'),
-      v_batch, auth.uid(), app.actor_name())
-    returning id into v_id;
+    begin
+      insert into public.bag_tallies (organization_id, terminal_id, service_id, cargo_id, service_hold_id, product_id, bl_id,
+        ticket_number, truck_plate, tractor_plate, lot, tallied_at, shift_id, period_start, period_end, bags, net_tm, operation_date,
+        notes, batch_id, registered_by, registered_by_name)
+      values (v_svc.organization_id, v_svc.terminal_id, v_svc.id, v_cargo.id, v_cargo.service_hold_id, v_prod, v_bl.id,
+        v_number, v_plate, v_tc, v_lot, v_at, v_shift, v_ps, v_pe, v_bags, v_tm, app.local_date(v_svc.terminal_id, v_at),
+        app.opt_text(p, 'notes'), v_batch, auth.uid(), app.actor_name())
+      returning id into v_id;
+    exception when unique_violation then
+      get stacked diagnostics v_constraint = constraint_name;
+      if v_constraint = 'bag_tallies_ticket_lot_uq' then
+        raise exception 'La boleta % ya está registrada en este servicio', v_number || coalesce(' (lote ' || v_lot || ')', '') using errcode = '23505'; end if;
+      raise;
+    end;
     perform set_config('app.ledger_write', 'on', true);
     update public.service_hold_cargo set discharged_tm = discharged_tm + v_tm where id = v_cargo.id returning discharged_tm into v_bal;
     if v_bl.id is not null then update public.service_bls set discharged_tm = discharged_tm + v_tm where id = v_bl.id; end if;
     perform set_config('app.ledger_write', 'off', true);
     insert into public.cargo_movements (organization_id, terminal_id, service_id, cargo_id, bl_id, tally_id, kind, quantity_tm, balance_after_tm, reason, created_by)
     values (v_svc.organization_id, v_svc.terminal_id, v_svc.id, v_cargo.id, v_bl.id, v_id, 'discharge', v_tm, v_bal,
-            'Conteo de ' || v_bags || ' sacos (' || (v_per.shift).name || ')', auth.uid());
-    v_n := v_n + 1; v_total := v_total + v_bags;
+            'Boleta ' || v_number || coalesce(' lote ' || v_lot, '') || ': ' || v_bags || ' sacos', auth.uid());
+    v_n := v_n + 1; v_total := v_total + v_bags; v_total_tm := v_total_tm + v_tm;
   end loop;
-  if v_n = 0 then raise exception 'Indique la cantidad de sacos de al menos una bodega' using errcode = '22023'; end if;
-  return jsonb_build_object('duplicate', false, 'rows', v_n, 'bags', v_total, 'from', v_per.period_start, 'to', v_per.period_end);
+  if v_n = 0 then raise exception 'Indique la cantidad de sacos de la boleta' using errcode = '22023'; end if;
+  return jsonb_build_object('duplicate', false, 'lots', v_n, 'bags', v_total, 'net_tm', v_total_tm, 'tallied_at', v_at,
+    'shift_name', (select name from public.shifts where id = v_shift), 'period_start', v_ps, 'period_end', v_pe);
 end $$;
 
 create or replace function public.void_bag_tally(p_tally uuid, p_reason text) returns jsonb
@@ -511,7 +538,7 @@ language sql stable security definer set search_path = '' as $$
     select t.service_hold_id hold_id, t.net_tm tm, null::int bags, t.shift_id, app.shift_period_start(t.shift_id, t.weighed_at) ps
     from public.weigh_tickets t where t.service_id = p_service and t.status = 'valid' and t.shift_id is not null
     union all
-    select b.service_hold_id, b.net_tm, b.bags, b.shift_id, b.period_start from public.bag_tallies b where b.service_id = p_service and b.status = 'valid'
+    select b.service_hold_id, b.net_tm, b.bags, b.shift_id, b.period_start from public.bag_tallies b where b.service_id = p_service and b.status = 'valid' and b.period_start is not null
   ),
   periods as (
     select distinct on (ps) ps, shift_id from (
@@ -671,7 +698,13 @@ begin
   return public.worker_report_payload_base(p_service) || jsonb_build_object(
     'operation_kind', v_svc.operation_kind,
     'bag_sample_report', app.bag_sample_report(p_service),
-    'shift_plan', (select name from public.shift_plans where id = v_svc.shift_plan_id));
+    'shift_plan', (select name from public.shift_plans where id = v_svc.shift_plan_id),
+    'bag_tickets', (select coalesce(jsonb_agg(jsonb_build_object('ticket', b.ticket_number, 'plate', b.truck_plate, 'tc', b.tractor_plate, 'lot', b.lot,
+                      'hold', h.hold_number, 'product', pr.name, 'bl', bl.bl_number, 'bags', b.bags, 'net_tm', b.net_tm, 'shift', sh.name,
+                      'time', to_char(b.tallied_at at time zone app.terminal_tz(v_svc.terminal_id), 'DD/MM/YYYY HH24:MI')) order by b.tallied_at, b.ticket_number, b.lot), '[]'::jsonb)
+                    from public.bag_tallies b join public.service_holds h on h.id = b.service_hold_id join public.products pr on pr.id = b.product_id
+                    left join public.service_bls bl on bl.id = b.bl_id left join public.shifts sh on sh.id = b.shift_id
+                    where b.service_id = p_service and b.status = 'valid'));
 end $$;
 revoke execute on function public.worker_report_payload(uuid), public.worker_report_payload_base(uuid) from public, anon, authenticated;
 grant execute on function public.worker_report_payload(uuid), public.worker_report_payload_base(uuid) to service_role;
