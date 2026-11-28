@@ -1,0 +1,69 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Paleta heredada del prototipo: azul puerto, tinta de casco, rojo antiincrustante para lo pendiente. */
+:root {
+  color-scheme: light;
+  --c-bg: 255 255 255; --c-ink: 15 29 43; --c-mute: 90 106 121; --c-line: 224 230 236; --c-panel: 243 246 248;
+  --c-field: 255 255 255; --c-edge: 197 208 218; --c-harbor: 11 79 113; --c-sea: 24 116 168; --c-seasoft: 226 240 248;
+  --c-red: 207 59 37; --c-redsoft: 252 233 229; --c-ok: 27 134 75; --c-oksoft: 227 243 233; --c-warn: 156 100 0; --c-warnsoft: 251 240 217;
+  --c-portal: 13 92 99; --c-portalsoft: 224 241 240;
+  --hull: #1b2b3a; --coam: #3a5165; --sup: #f2f5f7; --hold: #edf1f4; --water1: #cfe9f6; --water2: #9fd0ea; --crane: #d5dde4;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --s1: #257de0; --s2: #f47230; --s3: #00b894; --s4: #f2a600; --s5: #ee7fac; --s6: #008a17; --grid: #e7ebef; --axis: #c2cbd3;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --c-bg: 11 20 28; --c-ink: 230 237 243; --c-mute: 147 164 180; --c-line: 31 46 60; --c-panel: 17 28 39;
+    --c-field: 13 24 33; --c-edge: 45 63 80; --c-harbor: 10 58 87; --c-sea: 88 182 234; --c-seasoft: 17 48 74;
+    --c-red: 255 114 89; --c-redsoft: 59 26 20; --c-ok: 69 201 130; --c-oksoft: 18 48 31; --c-warn: 240 180 60; --c-warnsoft: 51 39 14;
+    --c-portal: 94 196 190; --c-portalsoft: 16 46 48;
+    --hull: #30475c; --coam: #4d677e; --sup: #c3ced8; --hold: #152230; --water1: #143a55; --water2: #0c2638; --crane: #8ea2b4;
+    --s1: #338ced; --s2: #e76624; --s3: #00a888; --s4: #d28e05; --s5: #e24d8b; --s6: #0aac23; --grid: #1f2e3c; --axis: #3a4d5e;
+  }
+}
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --c-bg: 11 20 28; --c-ink: 230 237 243; --c-mute: 147 164 180; --c-line: 31 46 60; --c-panel: 17 28 39;
+  --c-field: 13 24 33; --c-edge: 45 63 80; --c-harbor: 10 58 87; --c-sea: 88 182 234; --c-seasoft: 17 48 74;
+  --c-red: 255 114 89; --c-redsoft: 59 26 20; --c-ok: 69 201 130; --c-oksoft: 18 48 31; --c-warn: 240 180 60; --c-warnsoft: 51 39 14;
+  --c-portal: 94 196 190; --c-portalsoft: 16 46 48;
+  --hull: #30475c; --coam: #4d677e; --sup: #c3ced8; --hold: #152230; --water1: #143a55; --water2: #0c2638; --crane: #8ea2b4;
+    --s1: #338ced; --s2: #e76624; --s3: #00a888; --s4: #d28e05; --s5: #e24d8b; --s6: #0aac23; --grid: #1f2e3c; --axis: #3a4d5e;
+}
+
+@layer base {
+  html, body, #root { height: 100%; }
+  body { @apply bg-bg text-ink font-sans antialiased; font-size: 15px; line-height: 1.5; overflow-x: clip; }
+  ::selection { background: rgb(var(--c-sea) / 0.22); color: rgb(var(--c-ink)); }
+  :focus-visible { outline: 2px solid rgb(var(--c-sea)); outline-offset: 2px; border-radius: 6px; }
+  input, select, textarea, button { font: inherit; color: inherit; }
+  input, textarea { caret-color: rgb(var(--c-sea)); }
+  * { scrollbar-width: thin; scrollbar-color: rgb(var(--c-edge)) transparent; }
+  h1, h2, h3 { font-family: 'Barlow Semi Condensed', Barlow, system-ui, sans-serif; text-wrap: balance; letter-spacing: -0.01em; }
+  a { text-underline-offset: 3px; }
+  table { font-variant-numeric: tabular-nums; }
+}
+
+@layer components {
+  .num { font-family: 'Barlow Semi Condensed', Barlow, sans-serif; font-variant-numeric: tabular-nums; }
+  .field {
+    @apply w-full min-h-[40px] rounded-lg border border-edge bg-field px-3 py-2 text-[15px] text-ink placeholder:text-mute/80;
+    transition: border-color 150ms var(--ease-out), box-shadow 150ms var(--ease-out);
+  }
+  .field:focus { @apply outline-none border-sea; box-shadow: 0 0 0 3px rgb(var(--c-sea) / 0.18); }
+  .field:disabled { @apply bg-panel text-mute cursor-not-allowed; }
+  .field[aria-invalid='true'] { @apply border-red; }
+  .lbl { @apply text-[13px] font-medium text-mute; }
+  .card { @apply rounded-xl border border-line bg-bg; }
+  .press { transition: transform 140ms var(--ease-out), background-color 150ms var(--ease-out), border-color 150ms var(--ease-out), color 150ms var(--ease-out), box-shadow 150ms var(--ease-out); }
+  .press:active:not(:disabled) { transform: scale(0.97); }
+  .skeleton { @apply relative overflow-hidden rounded-md bg-panel; }
+  .skeleton::after { content: ''; position: absolute; inset: 0; transform: translateX(-100%); background: linear-gradient(90deg, transparent, rgb(var(--c-bg) / 0.6), transparent); animation: shimmer 1.4s infinite; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}
