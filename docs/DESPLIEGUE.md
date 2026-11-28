@@ -82,7 +82,8 @@ Existe un entorno **solo de demostración** (datos ficticios, no apto para opera
 Notas:
 
 - Las migraciones 001–010 están aplicadas. Las Edge Functions `admin-users`, `report-worker` y `report-sign` se desplegaron importando el código de este repositorio fijado a un commit; después de fusionar a `main`, vuelva a desplegarlas con el comando del paso 1.3 para que queden autocontenidas.
-- La función `demo-bootstrap` (carga inicial única) quedó desactivada y responde 410.
+- La función `demo-bootstrap` se usó dos veces con token de un solo uso (carga inicial y servicios de ejemplo SD-2026-0145 en sacos y SD-2026-0146 a granel con BL, vía `scripts/demo-extend.mjs`) y quedó desactivada; responde 410.
+- Usuarios de la demo en línea: los mismos de la demo local con dominio `vesselcontrol.example`; `bascula3@` registra las boletas y el peso de sacos de SD-2026-0145.
 - Vercel despliega producción desde `main`; las ramas generan *previews* protegidas por Vercel Authentication.
 - Para operar con datos reales, cree **otro** proyecto Supabase siguiendo la sección 1, sin datos de demostración.
 
