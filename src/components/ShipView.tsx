@@ -60,12 +60,14 @@ export function ShipView({ holds, selected, onSelect, vesselName, className, kin
   const pt = sorted.reduce((a, h) => a + h.products.reduce((b, p) => b + pv(p), 0), 0);
   const prog = tot ? 1 - pt / tot : 0;
 
-  const x0 = W * 0.015, x1 = W * 0.985, deck = H * 0.4, keel = H * 0.94;
+  // Descarga: el buque sube a medida que se vacía. Carga: se hunde a medida que se llena.
+  const x0 = W * 0.015, x1 = W * 0.985, deck = H * 0.4, keel = H * 0.88, water = H * 0.7, lift = -(load ? 1 - prog : prog) * H * 0.06;
   const bowL = W * 0.07, sx0 = x1 - W * (nar ? 0.16 : 0.13), sx1 = x1 - W * 0.008, hx0 = x0 + bowL + W * 0.02, hx1 = sx0 - W * 0.012;
   const gap = Math.max(4, W * 0.007), hw = (hx1 - hx0 - gap * (n - 1)) / n;
   const top = deck + 4, bot = keel - 8, ih = bot - top, full = ih * 0.9;
   const hp = `M${x0},${deck - 16}L${x0 + bowL},${deck - 16}L${x0 + bowL},${deck}L${x1},${deck}L${x1},${deck + (keel - deck) * 0.5}Q${x1 - W * 0.004},${keel} ${x1 - W * 0.04},${keel}L${x0 + bowL * 0.95},${keel}C${x0 + bowL * 0.35},${keel} ${x0 + bowL * 0.06},${deck + (keel - deck) * 0.3} ${x0},${deck - 16}Z`;
   const lv = Math.min(H * 0.065, 22), stop = deck - 4 * lv;
+  let wave = ''; for (let x = 0; x < W; x += 28) wave += `Q${x + 7},${water - 3} ${x + 14},${water} Q${x + 21},${water + 3} ${x + 28},${water}`;
   const cnt = Math.max(2, Math.floor((sx1 - sx0) / 12)), ww = (sx1 - sx0 - 8) / cnt;
   const fx = sx0 + (sx1 - sx0) * 0.55, fw = Math.max(8, W * 0.018);
   const products = useMemo(() => {
@@ -86,9 +88,16 @@ export function ShipView({ holds, selected, onSelect, vesselName, className, kin
               <circle cx="6" cy="5.5" r=".9" fill={shade(p.color, 0.3)} opacity=".6" />
             </pattern>
           ))}
+          <clipPath id={`hull-${uid}`}><path d={hp} /></clipPath>
+          <linearGradient id={`wg-${uid}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="var(--water1)" /><stop offset="1" stopColor="var(--water2)" /></linearGradient>
         </defs>
-        <g>
+        <path d={`M0,${water}${wave}L${W},${H}L0,${H}Z`} fill={`url(#wg-${uid})`} />
+        <g transform={`translate(0,${lift.toFixed(1)})`}>
           <path d={hp} fill="var(--hull)" />
+          <g clipPath={`url(#hull-${uid})`}>
+            <rect x="0" y={water - lift} width={W} height={H} fill="#a8372a" />
+            <rect x="0" y={water - lift - 3} width={W} height="3" fill="#e9eef2" />
+          </g>
           <rect x={sx0} y={stop} width={sx1 - sx0} height={deck - stop} fill="var(--sup)" stroke="var(--hull)" />
           <rect x={sx0 - W * 0.012} y={stop - lv * 0.2} width={sx1 - sx0 + W * 0.012} height={lv * 0.55} fill="var(--sup)" stroke="var(--hull)" />
           {Array.from({ length: 4 }).flatMap((_, f) => Array.from({ length: cnt }).map((__, k) => (
